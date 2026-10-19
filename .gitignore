@@ -1,0 +1,53 @@
+# docs/ is private except docs/reference/ (external sources and architecture diagrams)
+docs/*
+!docs/reference/
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Editors
+*~
+\#*#
+.#*
+*.swp
+*.swo
+.dir-locals-2.el
+.vscode/
+.idea/
+
+# Common Lisp compiled output (SBCL, CCL, CLISP, ECL, Allegro, LispWorks)
+*.fasl
+*.fas
+*.lib
+*.x86f
+*.dx64fsl
+*.lx64fsl
+*.ufsl
+*.64xfasl
+*.abcl
+*.o
+
+# Saved images and executables built with save-lisp-and-die
+*.core
+/bin/
+/build/
+/dist/
+
+# Project-local dependencies (Quicklisp bundles, qlot, ocicl)
+/quicklisp/
+/bundle/
+.qlot/
+/systems/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Scratch and logs
+*.log
+/tmp/
