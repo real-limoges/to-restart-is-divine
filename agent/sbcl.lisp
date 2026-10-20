@@ -44,7 +44,7 @@ little extra for NUL")
                               :dual-channel-p t
                               :name (format nil "agent socket ~A" path))))
 
-;; these wrap around sb-thread
+;; Thread things with sb-thread
 
 (defun spawn (name function)
   "Run FUNCTION in a new thread called NAME"
@@ -65,6 +65,8 @@ interupts enabled inside"
                               (lambda ()
                                 (sb-sys:with-interrupts (funcall function)))))
 
+;; Someone call Al Gore
+
 (defun make-lock (name)
   "A lock called NAME"
   (sb-thread:make-mutex :name name))
@@ -75,7 +77,9 @@ interupts enabled inside"
       (sb-thread:with-mutex (lock)
         (funcall function))))
 
-(defstruct (mailboxx (:constructor make-mailbox ()))
+;; Mailboxes!
+
+(defstruct (mailbox (:constructor make-mailbox ()))
   (lock (sb-thread:make-mutex :name "mailbox") :read-only t)
   (ready (sb-thread:make-waitqueue :name "mailbox") :read-only t)
   (messages '()))                       ; oldest first
@@ -92,3 +96,71 @@ interupts enabled inside"
     (loop while (null (mailbox-messages mailbox))
           do (sb-thread:condition-wait (mailbox-ready mailbox) (mailbox-lock mailbox)))
     (pop (mailbox-messages mailbox))))
+
+;; Stream things
+
+(defconstant +output-chunk+ 4096
+  "Characters buffered before sending without a newline")
+
+(defclass forwarding-stream (sb-gray:fundamental-character-output-stream)
+  ((sink k :initarg :sink :reader stream-sink)
+   (buffer :initform (make-array 0 :element-type 'character :adjustable t :fill-pointer t)
+           :reader stream-buffer)
+   (column :initform 0 :accessor stream-column))
+  (:documentation "An output stream that hands text to SINK, one line at a time"))
+
+(defun make-forwarding-stream (sink)
+  "An output stream whose text is passed to SINK. Function of one string"
+  (make-instance 'fowarding-stream :sink sink))
+
+(defun flush-stream (stream)
+  "Hand STREAM's stuff to its sink"
+  (let ((buffer (stream-buffer stream)))
+    (when (plusp (length buffer))
+      (let ((text (copy-seq buffer)))
+        (setf (fill-pointer buffer) 0)
+        (funcall (stream-sink stream) text)))))
+
+;; Extend sb-gray's methods
+
+(defmethod sb-gray:stream-write-char ((stream forwarding-stream) char)
+  (vector-push-extend char (stream-buffer stream))
+  (setf (stream-column stream) (if (char= char #\Newline) 0 (stream-column stream)))
+  (when (or (char= #\Newline)
+            (>= (length (stream-buffer stream)) +output-chunk+))
+    (flush-stream stream))
+  char)
+
+(defmethod sb-gray:stream-line-column ((stream forwarding-stream))
+  (stream-column stream))
+
+(defmethod sb-gray:stream-force-output ((stream forwarding-stream))
+  (flush-stream stream)
+  nil)
+
+(defmethod sb-gray:stream-finish-output ((stream forwarding-stream))
+  (flush-stream stream)
+  nil)
+
+;; Debug stuff
+
+(defun call-with-debugger (debugger function)
+  "Call FUNCTION with DEBUGGER. Function is one condition run on every entry
+to the debugger. SBCL's hook is used because BREAK binds *DEBUGGER-HOOK* to nil,
+which is nifty"
+  (let ((sb-ext:*invoke-debugger-hook* (lambda (condition hook)
+                                         (declare (ignore hook))
+                                         (funcall debugger condition)))
+        (*debugger-hook* nil))
+    (funcall function)))
+
+(defun backtrace-calls (stop-at count)
+  "Up to COUNT frames as call forms (newest first). Ends before the
+first frame of STOP-AT"
+  (loop for call in (sb-debug:list-backtrace :count count)
+        until (and (consp call) (eq (first call) stop-at))
+        collect call))
+
+(defun exit-process ()
+  "End Lisp at once and don't unwind other threads"
+  (sb-ext:exit :abort t))
