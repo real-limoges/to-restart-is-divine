@@ -1,6 +1,5 @@
 ;;;; agent/agent.lisp: featuring REPL, debugger, and the message pump
 
-;;; TODO: Split up Eval and Reader threads
 
 (in-package #:to-restart-is-divine/agent)
 
