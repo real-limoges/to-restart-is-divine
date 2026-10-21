@@ -125,6 +125,8 @@ Long or deep structures are cut short unless visitor has set their own limits"
         /// // // / / values
         *** ** ** * * (first values)))
 
+;; Debugger starts here
+
 (defun enter-debugger (agent condition)
   "CONDITION is the new debugger level, and keep serving the inbox until
 a restart."
@@ -147,3 +149,28 @@ a restart."
                       :backtrace (backtrace)))
     (unwind-protect (serve-level agent)
       (send agent (list :debug-done id)))))
+
+(defun serve-level (agent)
+  "Take messsages from inbox inside newest level until a restart"
+  (loop
+    (let ((message (mailbox-receive (agent-inbox agent))))
+      (ecase (first message)
+        (:eval (evaluate agent (second message)))
+        (:invoke-restart (destructuring-bind (id index) (rest message)
+                           (invoke-chosen-restart id index)))))))
+
+(defun invoke-chosen-restart (id index)
+  "Invoke restart INDEX of open level ID. Unknown indexes or levels are ignored"
+  (let* ((level (find id (eval-state-levels *eval-state*) :key #'first))
+         (restarts (second level)))
+    (when (and level (typep index `(integer 0 (,(length restarts)))))
+      (invoke-restart-interactively (nth index restarts)))))
+
+(defun visible-restarts (condition)
+  "CONDITION's restarts (from the inside) ending at agent's top-level ABORT.
+Restarts beyond belong to the thread which would end the eval thread"
+  (let* ((restarts (compute-restarts condition))
+         (end (position (eval-state-top-level *eval-state*) restarts)))
+    (if end
+        (subseq restarts 0 (1+ end))
+        restarts)))
