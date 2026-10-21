@@ -26,12 +26,29 @@
                         (stream-error ()
                           (setf (agent-connected agent) nil)))))))
 
-;; eval thread's state
+;;; eval thread's dynamic state (but frozen).
+;;; *EVAL-STATE* isn't assigned and only rebound with LET on the eval thread
+;;; so it has a definite lifecycle. Everything else is an argument.
 
-(defvar *agent*)
-(defvar *levels*)                       ; open debugger levels, newest first
-(defvar *top-level*)                    ; ABORT restart returns to top level
-(defvar *evaluating*)                   ; true when visitor code runs so an interupt can open a level
+(defstruct (eval-state (:constructor make-eval-state (&key levels top-level evaluating))
+                       (:copier nil))
+  (levels '() :read-only t)
+  (top-level nil :read-only t)
+  (evaluating nil :read-only t))
+
+(defvar *eval-state* (make-eval-state)
+  "Eval thread's state. Global value is idle. No levels and not evaluating")
+
+(defun eval-state-with (state &key (levels (eval-state-levels state))
+                                (top-level (eval-state-top-level state))
+                                (evaluating (eval-state-evaluating state)))
+  "Copy of STATE with the given fields replaced"
+  (make-eval-state :levels levels :top-level top-level :evaluating evaluating))
+
+;; (defvar *agent*)
+;; (defvar *levels*)                       ; open debugger levels, newest first
+;; (defvar *top-level*)                    ; ABORT restart returns to top level
+;; (defvar *evaluating*)                   ; true when visitor code runs so an interupt can open a level
 
 (define-condition interrupted (condition)
   ()
@@ -40,26 +57,31 @@
 (defconstant +backtrace-frames+ 30
   "Most frames :debug message brings")
 
-(defun eval-loop (agent)
-  (let* ((output (make-forwarding-stream (lambda (text) (send agent (list :output text)))))
-         (terminal (make-two-way-stream (make-stream-input-stream "") output))
-         (*agent* agent)
-         (*levels* '())
-         (*top-level* nil)
-         (*evaluating* nil)
+(defun call-with-visitor-repl (output function)
+  (let* ((terminal (make-two-way-stream (make-stream-input-stream "") output))
          (*package* (find-package "CL-USER"))
          (*standard-output* output)
          (*error-output* output)
          (*trace-output* output)
          (*terminal-io* terminal)
+         (*standard-input* terminal)
          (*query-io* terminal)
          (*debug-io* terminal)
          (- nil) (+ nil) (++ nil) (+++ nil)
          (* nil) (** nil) (*** nil)
          (/ nil) (// nil) (/// nil))
-    (call-with-debugger #'enter-debugger
-                        (lambda ()
-                          (loop (serve-top-level agent))))))
+    (funcall function)))
+
+(defun eval-loop (agent)
+  "The eval thread which serves the inbox at the top level, forever"
+  (let ((output (make-forwarding-stream (lambda (text) (send agent (list :output text)))))
+        (*eval-state* (make-evalstate)))
+    (call-with-visitor-repl
+     output
+     (lambda ()
+       (call-with-debugger (lambda (condition) (enter-debugger agent condition))
+                           (lambda ()
+                             (loop (serve-top-level agent))))))))
 
 (defun serve-top-level (agent)
   "Take a message from the inbox at the top level. If the level is gone
@@ -90,7 +112,7 @@ Long or deep structures are cut short unless visitor has set their own limits"
         (*print-level* (or *print-level* 10)))
     (mapcar #'prin1-to-string values)))
 
-(defun evaluate-formj (form)
+(defun evaluate-form (form)
   "FORM's values. A RETRY restart evaluates FORM again from the start."
   (loop
     (restart-case (return (multiple-value-list (eval form)))
@@ -102,3 +124,26 @@ Long or deep structures are cut short unless visitor has set their own limits"
   (setf +++ ++ ++ + + form
         /// // // / / values
         *** ** ** * * (first values)))
+
+(defun enter-debugger (agent condition)
+  "CONDITION is the new debugger level, and keep serving the inbox until
+a restart."
+  (let* ((id (agent-next-id agent))
+         (restarts (visible-restarts condition))
+         (levels (cons (list id restarts) (eval-state-levels *eval-state*)))
+         (*eval-state* (eval-state-with *eval-state* :levels levels :evaluating nil)))
+    (setf (agent-next-id agent) (1+ id))
+    (finish-output *standard-output*)
+    (send agent (list :debug
+                      :id id
+                      :level (length *levels*)
+                      :type (type-name condition)
+                      :report (printed #'princ-to-string condition)
+                      :restarts (loop for restart in restarts
+                                      for index from 0
+                                      collect (list index
+                                                    (restart-label-name restart)
+                                                    (printed #'princ-to-string restart)))
+                      :backtrace (backtrace)))
+    (unwind-protect (serve-level agent)
+      (send agent (list :debug-done id)))))
