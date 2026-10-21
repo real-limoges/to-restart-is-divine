@@ -1,5 +1,7 @@
 ;;;; agent/agent.lisp: featuring REPL, debugger, and the message pump
 
+;;; TODO: Split up Eval and Reader threads
+
 (in-package #:to-restart-is-divine/agent)
 
 ;;; Each agent gets 2 threads. Reader reads every message from the gateway
@@ -174,3 +176,71 @@ Restarts beyond belong to the thread which would end the eval thread"
     (if end
         (subseq restarts 0 (1+ end))
         restarts)))
+
+(defun restart-label-name (restart)
+  "RESTART's name as string (empty if anon)"
+  (let ((name (restart-name restart)))
+    (if name (symbol-name name) "")))
+
+(defun type-name (condition)
+  "CONDITION's type, package-qualified unless its in CL-USER"
+  (with-standard-io-syntax
+    (prin1-to-string (type-of condition))))
+
+(defun printed (printer object)
+  "OBJECT printed by PRINTER, or a note if there's an error"
+  (handler-case (funcall printer object)
+    (error () "#<error while printing>")))
+
+(defun backtrace ()
+  "Newest frames printed and numbered down to agent's EVALUATE-FORM"
+  (let ((*print-length* 10)
+        (*print-level* 4)
+        (*print-circle* t))
+    (loop for cal in (backtrace-calls 'evaluate-form +backtrace-frames+)
+          for index from 0
+          collect (format nil "~D: ~A" index (printed #'prin1-to-string call)))))
+
+;; Reader Thread
+
+(defun interrupt-evaluation (agent)
+  "Open debugger level in the eval thread when running visitor code"
+  (interrupt (agent-eval-thread agent)
+             (lambda ()
+               (when (eval-state-evaluating *eval-state*)
+                 (with-simple-restart (continue "Resume the interrupted eval")
+                   (invoke-debugger (make-condition 'interrupted)))))))
+
+
+(defun reader-loop (agent)
+  "Pump messages from gateway until the socket closes, then end eval thread"
+  (unwind-protect
+       (handler-case
+           (loop for message = (read-message (agent-stream agent))
+                 while message
+                 do (case (first message)
+                      ((:eval :invoke-restart) (mailbox-send (agent-inbox agent) message))
+                      (:interrupt (interrupt-evaluation agent))
+                      (:ping (send agent '(:pong)))))
+         (error (condition)
+           (format *error-output* "~&;; Agent reader stopped: ~A~%" condition)))
+    (kill-thread (agent-eval-thread agent))
+    (close (agent-stream agent) :abort t)))
+
+(defun start-agent (path)
+  "Connect to gateway listening on PATH, send :ready and start both threads. Return the agent"
+  (let ((agent (%make-agent (connect-unix-socket path))))
+    (setf (agent-eval-thread agent) (spawn "agent eval" (lambda () (eval-loop agent))))
+    (send agent '(:ready))
+    (setf (agent-reader-thread agent) (spawn "agent reader" (lambda () (reader-loop agent))))
+    agent))
+
+(defun wait-for-agent (agent)
+  "Return once AGENT's gateway has hung up and *both* threads have ended"
+  (wait-for-thread (agent-reader-thread agent))
+  (wait-for-thread (agent-eval-thread agent)))
+
+(defun run-agent (path)
+  "Serve gateway at PATH until it hands up. Entry point for agent"
+  (wait-for-agent (start-agent path))
+  (exit-process))
