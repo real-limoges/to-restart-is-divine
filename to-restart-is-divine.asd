@@ -8,7 +8,7 @@
   :components ((:module "agent"
                 :components ((:file "wire")))))
 
-(defsystem "to-restart-is-devine/agent"
+(defsystem "to-restart-is-divine/agent"
   :description "Debug Agent Loaded Into Every Lesson. No Deps, No Contribs"
   :depends-on ("to-restart-is-divine/wire")
   :serial t

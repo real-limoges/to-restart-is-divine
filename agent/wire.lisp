@@ -1,7 +1,8 @@
 ;;;; agent/wire.lisp: framing messages (used by Agent and Gateway)
 
 (defpackage #:to-restart-is-divine/wire
-  (:use #:cl))
+  (:use #:cl)
+  (:export #:write-message #:read-message #:malformed-message #:*max-message-length*))
 
 (in-package #:to-restart-is-divine/wire)
 
@@ -55,11 +56,11 @@
 
 (defun parse-message (text)
   "The message TEXT prings, which must be one list headed by a single keyword.
-Reads with *READ-EVAL* off and the keyword package around."
-  (multiple-value-bind (messsage end)
+Reads with *READ-EVAL* off in the standard syntax WRITE-MESSAGE prints with,
+so NIL reads back as NIL rather than :NIL."
+  (multiple-value-bind (message end)
       (handler-case (with-standard-io-syntax
-                      (let ((*read-eval* nil)
-                            (*package* (find-package "KEYWORD")))
+                      (let ((*read-eval* nil))
                         (read-from-string text)))
         ((or reader-error end-of-file) (condition)
           (malformed "~A" condition)))
@@ -69,13 +70,13 @@ Reads with *READ-EVAL* off and the keyword package around."
       (malformed "~S is not a list headed by a keyword" message))
     message))
 
-(defun read-messsage (stream)
+(defun read-message (stream)
   "The next message on STREAM or NIL if STREAM ends cleanly before"
   (let ((prefix (read-chars stream +prefix-width+)))
     (if (zerop (length prefix))
         nil
         (let* ((length (prefix-length prefix))
-               (text (read-cahrs stream length)))
+               (text (read-chars stream length)))
           (unless (= (length text) length)
             (malformed "the stream ended inside a message"))
           (parse-message text)))))

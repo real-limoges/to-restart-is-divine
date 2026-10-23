@@ -3,6 +3,22 @@
 
 (in-package #:to-restart-is-divine/agent)
 
+(defconstant +backtrace-frames+ 30
+  "Most frames :debug message brings")
+
+;;; eval thread's dynamic state (but frozen).
+;;; *EVAL-STATE* isn't assigned and only rebound with LET on the eval thread
+;;; so it has a definite lifecycle. Everything else is an argument.
+
+(defstruct (eval-state (:constructor make-eval-state (&key levels top-level evaluating))
+                       (:copier nil))
+  (levels '() :read-only t)
+  (top-level nil :read-only t)
+  (evaluating nil :read-only t))
+
+(defvar *eval-state* (make-eval-state)
+  "Eval thread's state. Global value is idle. No levels and not evaluating")
+
 ;;; Each agent gets 2 threads. Reader reads every message from the gateway
 ;;; It answers :ping itself, turns :interrupt into an interrupt of the eval
 ;;; thread, and queues :eval and :invoke-restart in the inbox.
@@ -27,19 +43,6 @@
                         (stream-error ()
                           (setf (agent-connected agent) nil)))))))
 
-;;; eval thread's dynamic state (but frozen).
-;;; *EVAL-STATE* isn't assigned and only rebound with LET on the eval thread
-;;; so it has a definite lifecycle. Everything else is an argument.
-
-(defstruct (eval-state (:constructor make-eval-state (&key levels top-level evaluating))
-                       (:copier nil))
-  (levels '() :read-only t)
-  (top-level nil :read-only t)
-  (evaluating nil :read-only t))
-
-(defvar *eval-state* (make-eval-state)
-  "Eval thread's state. Global value is idle. No levels and not evaluating")
-
 (defun eval-state-with (state &key (levels (eval-state-levels state))
                                 (top-level (eval-state-top-level state))
                                 (evaluating (eval-state-evaluating state)))
@@ -54,9 +57,6 @@
 (define-condition interrupted (condition)
   ()
   (:report "Interrupted from the page"))
-
-(defconstant +backtrace-frames+ 30
-  "Most frames :debug message brings")
 
 (defun call-with-visitor-repl (output function)
   (let* ((terminal (make-two-way-stream (make-stream-input-stream "") output))

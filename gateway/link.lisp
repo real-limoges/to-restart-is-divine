@@ -1,6 +1,6 @@
 ;;;; gateway/link.lisp: the gateway's end of the agent socket
 
-(defpackage #'to-restart-is-divine/link
+(defpackage #:to-restart-is-divine/link
   (:use #:cl)
   (:export #:make-socket-directory #:socket-path #:listen-for-agent #:accept-agent
            #:link #:link-stream #:link-process #:open-local-agent #:close-link))

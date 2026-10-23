@@ -10,6 +10,9 @@
   "Octets of path that fit in sockaddr_un on every target with a
 little extra for NUL")
 
+(defconstant +output-chunk+ 4096
+  "Characters buffered before sending without a newline")
+
 (sb-alien:define-alien-routine ("socket" %socket) sb-alien:int
   (domain sb-alien:int) (type sb-alien:int) (protocol sb-alien:int))
 
@@ -99,11 +102,8 @@ interupts enabled inside"
 
 ;; Stream things
 
-(defconstant +output-chunk+ 4096
-  "Characters buffered before sending without a newline")
-
 (defclass forwarding-stream (sb-gray:fundamental-character-output-stream)
-  ((sink k :initarg :sink :reader stream-sink)
+  ((sink :initarg :sink :reader stream-sink)
    (buffer :initform (make-array 0 :element-type 'character :adjustable t :fill-pointer t)
            :reader stream-buffer)
    (column :initform 0 :accessor stream-column))
