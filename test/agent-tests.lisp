@@ -102,3 +102,16 @@ After, hang up and wait fro the agent's thread to end"
          (tell agent (list :invoke-restart (debug-id inner) (restart-index inner "ABORT")))
          (is (equal (list :debug-done (debug-id inner)) (next agent)))
          (is (equal (list :debug-done (debug-id outer)) (next agent))))))))
+
+(test inner-restart-closes-its-own-level
+  (call-with-agent
+   lammbda (agent)
+   (tell agent '(:eval "(car 5)"))
+   (let ((outer (next agent)))
+     (tell agent '(:eval "(restart-case (error \"x\") (retreat () :report \"Back off.\" 42))"))
+     (let ((inner (next agent)))
+       (tell agent (list :invoke-restart (debug-id inner)) (restart-index inner "RETREAT")(tell agent)))
+       (is (equal (list :debug-done (debug-done (debug-id inner)) (next agent)))
+           (is (equal '(:values ("42")) (next agent)))
+           (tell agent (list :invoke-restart (debug-id outer) (restart-index outer "ABORT")))
+           (is (equal (list :debug-done (debug-id outer)) (next agent)))))))

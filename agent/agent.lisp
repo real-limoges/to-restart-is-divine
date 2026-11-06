@@ -59,6 +59,8 @@
   (:report "Interrupted from the page"))
 
 (defun call-with-visitor-repl (output function)
+  "Call FUNCTION inside the visitor's REPL environment. Every Standard Stream writes
+to OUTPUT and reads nothing. CL-USER is current and REPL variables are empty"
   (let* ((terminal (make-two-way-stream (make-stream-input-stream "") output))
          (*package* (find-package "CL-USER"))
          (*standard-output* output)
