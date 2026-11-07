@@ -36,6 +36,7 @@
 After, hang up and wait fro the agent's thread to end"
   (let* ((directory (ln:make-socket-directory))
          (path (ln:socket-path directory))
+         (listener (ln:listen-for-agent path))
          (agent (a:start-agent path))
          (stream (ln:accept-agent listener :timeout 5)))
     (sb-bsd-sockets:socket-close listener)
@@ -94,7 +95,7 @@ After, hang up and wait fro the agent's thread to end"
 (test abort-closes-every-level
   (call-with-agent
    (lambda (agent)
-     (tell agent '(:eval "car 5)"))
+     (tell agent '(:eval "(car 5)"))
      (let ((outer (next agent)))
        (tell agent '(:eval "(/ 1 0)"))
        (let ((inner (next agent)))
@@ -105,16 +106,16 @@ After, hang up and wait fro the agent's thread to end"
 
 (test inner-restart-closes-its-own-level
   (call-with-agent
-   lammbda (agent)
-   (tell agent '(:eval "(car 5)"))
-   (let ((outer (next agent)))
-     (tell agent '(:eval "(restart-case (error \"x\") (retreat () :report \"Back off.\" 42))"))
-     (let ((inner (next agent)))
-       (tell agent (list :invoke-restart (debug-id inner)) (restart-index inner "RETREAT")(tell agent)))
-     (is (equal (list :debug-done (debug-done (debug-id inner)) (next agent)))
+   (lambda (agent)
+     (tell agent '(:eval "(car 5)"))
+     (let ((outer (next agent)))
+       (tell agent '(:eval "(restart-case (error \"x\") (retreat () :report \"Back off.\" 42))"))
+       (let ((inner (next agent)))
+         (tell agent (list :invoke-restart (debug-id inner) (restart-index inner "RETREAT")))
+         (is (equal (list :debug-done (debug-id inner)) (next agent)))
          (is (equal '(:values ("42")) (next agent)))
          (tell agent (list :invoke-restart (debug-id outer) (restart-index outer "ABORT")))
-         (is (equal (list :debug-done (debug-id outer)) (next agent)))))))
+         (is (equal (list :debug-done (debug-id outer)) (next agent))))))))
 
 (test break-enters-the-agent-debugger
   (call-with-agent
@@ -144,13 +145,13 @@ After, hang up and wait fro the agent's thread to end"
      (tell agent '(:eval "("))
      (let ((debug (next agent)))
        (is (eq :debug (first debug)))
-       (tell agent (list :invoke-restart (debug-id debug) (restart-id debug "ABORT")))
+       (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
        (is (equal (list :debug-done (debug-id debug)) (next agent)))))))
 
 (test output-is-sent-before-the-debugger-opens
   (call-with-agent
    (lambda (agent)
-     (tell agent '(:eval "(progn (princ \"a\" (car 5)"))
+     (tell agent '(:eval "(progn (princ \"a\") (car 5))"))
      (is (equal '(:output "a") (next agent)))
      (is (eq :debug (first (next agent)))))))
 
@@ -163,7 +164,7 @@ After, hang up and wait fro the agent's thread to end"
      (let ((debug (next agent)))
        (tell agent '(:eval "(defun f (x) (if (listp x) (car x) x))"))
        (is (equal '(:values ("F")) (next-past-output agent)))
-       (tell agnet (list :invoke-restart (debug-id debug) (restart-index debug "RETRY")))
+       (tell agent(list :invoke-restart (debug-id debug) (restart-index debug "RETRY")))
        (is (equal (list :debug-done (debug-id debug)) (next agent)))
        (is (equal '(:values ("5")) (next agent)))))))
 
@@ -171,4 +172,4 @@ After, hang up and wait fro the agent's thread to end"
   (call-with-agent
    (lambda (agent)
      (tell agent '(:eval "(let ((x (list 1 2 3))) (setf (cdr (last x)) x))"))
-     (is (equal '(:values ("#1=(1 2 3 . #1#")) (next agent))))))
+     (is (equal '(:values ("#1=(1 2 3 . #1#)")) (next agent))))))

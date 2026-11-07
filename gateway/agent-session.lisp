@@ -10,7 +10,7 @@
    (handler :initarg :handler :reader session-handler)
    (send-lock :initform (sb-thread:make-mutex :name "agent session send") :reader session-send-lock)
    (closed :initform nil :accessor session-closed-p)
-   (reader: accessor session-reader))
+   (reader :accessor session-reader))
   (:documentation "A session on one agent - it's reached over its link"))
 
 (defun make-local-agent-session (handler)
@@ -40,9 +40,9 @@
 
 (defun send-to-agent (session message)
   "Write MESSAGE to SESSION's agent unless SESSION is closed"
-  (sb-thread:make-mutex ((session-send-lock session))
-                        (unless (session-closed-p session)
-                          (w:write-message message (ln:link-stream (session-link session))))))
+  (sb-thread:with-mutex ((session-send-lock session))
+    (unless (session-closed-p session)
+      (w:write-message message (ln:link-stream (session-link session))))))
 
 (defmethod session-eval ((session agent-session) text)
   (send-to-agent session (list :eval text)))

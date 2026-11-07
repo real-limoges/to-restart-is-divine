@@ -17,7 +17,7 @@ little extra for NUL")
   (domain sb-alien:int) (type sb-alien:int) (protocol sb-alien:int))
 
 (sb-alien:define-alien-routine ("connect" %connect) sb-alien:int
-  (fd sb-alien:int) (address sb-alien:int) (protocol sb-alien:int))
+  (fd sb-alien:int) (address sb-alien:system-area-pointer) (length sb-alien:unsigned-int))
 
 (defun socket-address (path)
   "PATH as a sockaddr_un: two-byte header, path, NUL-term"
@@ -94,7 +94,7 @@ interupts enabled inside"
     (sb-thread:condition-notify (mailbox-ready mailbox))))
 
 (defun mailbox-receive (mailbox)
-  "The oldest message in MIALBOX which is waiting for on if it is empty"
+  "The oldest message in MAILBOX, waiting for one if it is empty"
   (sb-thread:with-mutex ((mailbox-lock mailbox))
     (loop while (null (mailbox-messages mailbox))
           do (sb-thread:condition-wait (mailbox-ready mailbox) (mailbox-lock mailbox)))
@@ -111,7 +111,7 @@ interupts enabled inside"
 
 (defun make-forwarding-stream (sink)
   "An output stream whose text is passed to SINK. Function of one string"
-  (make-instance 'fowarding-stream :sink sink))
+  (make-instance 'forwarding-stream :sink sink))
 
 (defun flush-stream (stream)
   "Hand STREAM's stuff to its sink"
@@ -126,7 +126,7 @@ interupts enabled inside"
 (defmethod sb-gray:stream-write-char ((stream forwarding-stream) char)
   (vector-push-extend char (stream-buffer stream))
   (setf (stream-column stream) (if (char= char #\Newline) 0 (stream-column stream)))
-  (when (or (char= #\Newline)
+  (when (or (char= char #\Newline)
             (>= (length (stream-buffer stream)) +output-chunk+))
     (flush-stream stream))
   char)
@@ -148,11 +148,15 @@ interupts enabled inside"
   "Call FUNCTION with DEBUGGER. Function is one condition run on every entry
 to the debugger. SBCL's hook is used because BREAK binds *DEBUGGER-HOOK* to nil,
 which is nifty"
-  (let ((sb-ext:*invoke-debugger-hook* (lambda (condition hook)
-                                         (declare (ignore hook))
-                                         (funcall debugger condition)))
-        (*debugger-hook* nil))
-    (funcall function)))
+  (labels ((hook (condition previous)
+             (declare (ignore previous))
+             ;; SBCL binds the hook to NIL while it runs; rebind it so
+             ;; an error inside an open level opens the next level here too.
+             (let ((sb-ext:*invoke-debugger-hook* #'hook))
+               (funcall debugger condition))))
+    (let ((sb-ext:*invoke-debugger-hook* #'hook)
+          (*debugger-hook* nil))
+      (funcall function))))
 
 (defun backtrace-calls (stop-at count)
   "Up to COUNT frames as call forms (newest first). Ends before the

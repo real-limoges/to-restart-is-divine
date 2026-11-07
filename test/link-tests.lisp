@@ -11,7 +11,7 @@
          (let ((agent (ln:link-stream link)))
            (is (equal '(:ready) (next agent)))
            (tell agent '(:eval "(car 5)"))
-           (let ((debug (next agnet)))
+           (let ((debug (next agent)))
              (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
              (is (equal (list :debug-done (debug-id debug)) (next agent))))
            (tell agent '(:eval "(+ 1 2)"))

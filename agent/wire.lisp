@@ -32,7 +32,9 @@
 
 (defun write-message (message stream)
   "Write MESSAGE to STREAM with len prefix, then force it out"
-  (let ((text (with-standard-io-syntax (prin1-to-string message))))
+  (let ((text (with-standard-io-syntax
+                (let ((*print-case* :downcase))
+                  (prin1-to-string message)))))
     (when (> (length text) *max-message-length*)
       (malformed "~D characters is over the limit of ~D" (length text) *max-message-length*))
     (format stream "~(~v,'0X~)~A" +prefix-width+ (length text) text)

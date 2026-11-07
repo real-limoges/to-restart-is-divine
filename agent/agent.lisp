@@ -61,7 +61,7 @@
 (defun call-with-visitor-repl (output function)
   "Call FUNCTION inside the visitor's REPL environment. Every Standard Stream writes
 to OUTPUT and reads nothing. CL-USER is current and REPL variables are empty"
-  (let* ((terminal (make-two-way-stream (make-stream-input-stream "") output))
+  (let* ((terminal (make-two-way-stream (make-string-input-stream "") output))
          (*package* (find-package "CL-USER"))
          (*standard-output* output)
          (*error-output* output)
@@ -78,7 +78,7 @@ to OUTPUT and reads nothing. CL-USER is current and REPL variables are empty"
 (defun eval-loop (agent)
   "The eval thread which serves the inbox at the top level, forever"
   (let ((output (make-forwarding-stream (lambda (text) (send agent (list :output text)))))
-        (*eval-state* (make-evalstate)))
+        (*eval-state* (make-eval-state)))
     (call-with-visitor-repl
      output
      (lambda ()
@@ -91,13 +91,14 @@ to OUTPUT and reads nothing. CL-USER is current and REPL variables are empty"
 then it's ignored"
   (let ((message (mailbox-receive (agent-inbox agent))))
     (when (eq (first message) :eval)
-      (with-simple-restart (abort "Return to top level")
-        (let ((*top-level* (find 'abort (compute-restarts) :key #'restart-name)))
+      (with-simple-restart (abort "Return to top level.")
+        (let ((*eval-state* (eval-state-with *eval-state*
+                                             :top-level (find 'abort (compute-restarts) :key #'restart-name))))
           (evaluate agent (second message)))))))
 
 (defun evaluate (agent text)
   "Read + evaluate each form in TEXT, sending printed values"
-  (let ((*evaluating* t))
+  (let ((*eval-state* (eval-state-with *eval-state* :evaluating t)))
     (with-input-from-string (in text)
       (loop for form = (read in nil in)
             until (eq form in)
@@ -141,7 +142,7 @@ a restart."
     (finish-output *standard-output*)
     (send agent (list :debug
                       :id id
-                      :level (length *levels*)
+                      :level (length levels)
                       :type (type-name condition)
                       :report (printed #'princ-to-string condition)
                       :restarts (loop for restart in restarts
@@ -198,7 +199,7 @@ Restarts beyond belong to the thread which would end the eval thread"
   (let ((*print-length* 10)
         (*print-level* 4)
         (*print-circle* t))
-    (loop for cal in (backtrace-calls 'evaluate-form +backtrace-frames+)
+    (loop for call in (backtrace-calls 'evaluate-form +backtrace-frames+)
           for index from 0
           collect (format nil "~D: ~A" index (printed #'prin1-to-string call)))))
 

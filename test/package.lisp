@@ -6,7 +6,8 @@
   (:use #:cl #:fiveam)
   (:local-nicknames (#:w #:to-restart-is-divine/wire)
                     (#:a #:to-restart-is-divine/agent)
-                    (#:ln #:to-restart-is-divine/link))
+                    (#:ln #:to-restart-is-divine/link)
+                    (#:g #:to-restart-is-divine/gateway))
   (:export #:divine-tests))
 
 (in-package #:to-restart-is-divine/tests)

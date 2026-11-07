@@ -8,7 +8,7 @@
 (defun waiting-recorder ()
   "An event handler and a function returning the next even it was given.
 It waits up to 10 seconds"
-  (let ((lock (sb-thread:make-mutext :name "recorder"))
+  (let ((lock (sb-thread:make-mutex :name "recorder"))
         (arrived (sb-thread:make-waitqueue :name "recorder"))
         (events '()))
     (values (lambda (event)

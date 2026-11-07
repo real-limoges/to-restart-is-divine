@@ -17,15 +17,16 @@
                              (:file "sbcl")
                              (:file "agent")))))
 
-(defsystem "to-restart-in-divine/gateway"
-  :description "The session protocoll, console state, and agent sessions. No third-party dependencies"
+(defsystem "to-restart-is-divine/gateway"
+  :description "The session protocol, console state, and agent sessions. No third-party dependencies"
   :depends-on ("to-restart-is-divine/wire" "to-restart-is-divine/link")
   :serial t
   :components ((:module "gateway"
                 :components ((:file "package")
-                             (:file "session")
+                             ;; (:file "session")  ; not written yet
                              (:file "agent-session")
-                             (:file "console"))))
+                             ;; (:file "console")  ; not written yet
+                             )))
   :in-order-to ((test-op (test-op "to-restart-is-divine/tests"))))
 
 (defsystem "to-restart-is-divine/link"
@@ -46,9 +47,9 @@
                              (:file "wire-tests")
                              (:file "agent-tests")
                              (:file "link-tests")
-                             (:file "fake-session")
-                             (:file "console")
-                             (:file "fake-session-tests")
+                             ;; (:file "fake-session")        ; not written yet
+                             ;; (:file "console")             ; not written yet
+                             ;; (:file "fake-session-tests")  ; not written yet
                              (:file "agent-session-tests"))))
   :perform (test-op (o c)
                     (declare (ignore o c))
