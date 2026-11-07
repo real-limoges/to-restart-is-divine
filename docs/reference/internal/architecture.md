@@ -5,7 +5,7 @@
 My vision is a visitor opens a page and gets served a REPL backed by a real SBCL image, with nothing to install.
 You type `(car 5)`, and instead of a wall of text you get the condition, a button per restart, and a backtrace.
 You pick one and keep going.
-That's the whole demo - it shows how cool live image programming is.
+That's the whole demo, and it shows how cool live image programming is.
 
 ```mermaid
 flowchart TB
@@ -44,16 +44,16 @@ A disposable container (Linux) or jail (FreeBSD).
 Visitors get one per session and it is thrown away when the session ends.
 
 **Lesson image.**
-An SBCL core with ANSwe Common Lisp, a debug agent, and one lesson's code in it.
+An SBCL core with ANSI Common Lisp, a debug agent, and one lesson's code in it.
 
 **Debug agent.**
 Zero-dependency code living in every lesson image.
 It runs the REPL, ships output back, and replaces the terminal debugger with one that sends restarts to the gateway as data.
-The key is that its just transiting data
+The key is that it's just transiting data.
 
 ## The Wall
 
-There is just on e security boundary: the sandbox wall.
+There is just one security boundary: the sandbox wall.
 Everything inside it belongs to the visitor, including the agent.
 Visitor code runs in the same image, so it can redefine agent functions or write straight to the socket if it wants to.
 I'm totally fine with that, because nothing outside the wall trusts the agent at all.
@@ -64,7 +64,7 @@ flowchart TB
     typed["Visitor text"]
     wrap["Wrapped as a string<br/>inside :eval"]
     parse["Bounded read<br/>read-eval off"]
-    state["Uwe state"]
+    state["UI state"]
   end
   subgraph inside["Sandbox side"]
     agent["Agent reads<br/>and evals it"]
@@ -86,8 +86,8 @@ Visitor code can write whatever the hell it likes to the socket, so the gateway 
 You can forge a frame that can still intern a pile of symbols, nest a million parens deep, or claim a length of four gigabytes.
 The gateway will cap the frame length before it reads anything, and for now reads with only the keyword package current.
 That still lets a forged `cl-user::x` intern into a real package, and every new keyword sticks around, which is why the reader isn't settled.
-Maybe I'll use `cl:read` under tight bindings or a tiny parser that only knows keywords, strings, integers and lists is open.
-we lean toward the tiny parser, since the message shapes are small and fixed and then there's nothing to reason about.
+Whether I use `cl:read` under tight bindings or a tiny parser that only knows keywords, strings, integers and lists is open.
+We lean toward the tiny parser, since the message shapes are small and fixed and then there's nothing to reason about.
 Also, we just like parsers.
 
 **No sandboxing inside Lisp.**
@@ -115,7 +115,7 @@ stateDiagram-v2
    The session manager checks the per-IP cap, the global cap, and the creation rate, and turns the session away if any of them is over.
 2. **Starting.**
    It draws a random 128-bit session id, starts listening on the socket at `sandbox-socket-path`, then calls `start-sandbox`, and the sandbox runs `sbcl --core lesson-NAME.core`.
-   The agent connects as soon as its image starts, the gateway accepts and waits for `(:ready)`, and the Uwe says "starting" until it shows up.
+   The agent connects as soon as its image starts, the gateway accepts and waits for `(:ready)`, and the UI says "starting" until it shows up.
    If it never shows up, the session gets reaped like any other; we really don't think we need a separate failure path for that.
 3. **Live.**
    The gateway relays input down and output, values and debugger state back up.
@@ -177,13 +177,13 @@ Even `(car 5)`, which should have no restarts of its own, gets two buttons inste
 Lessons with a planted bug bring their own `restart-case` and those show up alongside.
 
 **One SBCL thing to check.**
-ANSwe `break` binds `*debugger-hook*` to `nil`, so `(break)` would skip the hook and fall into the terminal debugger (which people can't see).
+ANSI `break` binds `*debugger-hook*` to `nil`, so `(break)` would skip the hook and fall into the terminal debugger (which people can't see).
 SBCL has `sb-ext:*invoke-debugger-hook*` for exactly this type of situation.
 `invoke-debugger` consults it first and `break` leaves it alone which we verified against SBCL 2.6.9.
 
 **Restarts that want a value.**
 `use-value` and `store-value` need an argument, and the draft messages have nowhere to put one.
-we think the panel asks for a form, sends it as a string, and the agent reads it inside the sandbox, so the gateway rule about never reading visitor text still holds.
+We think the panel asks for a form, sends it as a string, and the agent reads it inside the sandbox, so the gateway rule about never reading visitor text still holds.
 I'm pretty open for how this plays out.
 
 ## Nested Levels
@@ -229,7 +229,7 @@ flowchart TB
   class reader,inbox,evalt,outs tone-amber
 ```
 
-Two additional threads
+Two additional threads.
 `:interrupt` has to arrive while the eval thread is busy running a `(loop)`, so something other than the eval thread has to be reading the socket.
 
 - **Reader thread.**
@@ -240,9 +240,9 @@ Two additional threads
   It also runs the debugger loop above, which pulls from the same inbox.
 - **Output.**
   `*standard-output*` and `*error-output*` are bound to streams that send `:output` frames.
-  Both threads write to the socket, so writes go through one mutex (unless we can figure out a mutexless setup)
+  Both threads write to the socket, so writes go through one mutex (unless we can figure out a mutexless setup).
 
-The agent can't use a socket or JSON library (nothing beyond ANSwe goes in the image), so it frames its own messages.
+The agent can't use a socket or JSON library (nothing beyond ANSI goes in the image), so it frames its own messages.
 SBCL's socket library, `sb-bsd-sockets`, is a contrib and stays out too, so the agent calls `socket()` and `connect()` itself through `sb-alien`, which is in the base image.
 Its inbox is likewise a plain list behind an `sb-thread` mutex rather than the `sb-concurrency` contrib.
 Backtraces, frame inspection and thread interrupts aren't ANSI, so all of that lives in one SBCL-specific file and the rest stays portable.
@@ -250,7 +250,7 @@ Backtraces, frame inspection and thread interrupts aren't ANSI, so all of that l
 **Interrupting.**
 The interrupt lands in the debugger like any other condition, which we really like, because it means `(loop)` doesn't just die.
 You get a panel with `continue`, and you can let it keep spinning if you want.
-we mean, this is like the charm of Lisp.
+We mean, this is like the charm of Lisp.
 
 ```mermaid
 sequenceDiagram
@@ -321,7 +321,7 @@ This is where it starts:
 ## Printing
 
 Values come back as printed strings (never as objects!!) so nothing in the image ever has to be read back on the gateway side as Lisp data.
-That moves the problem to printing, and visitors will absolutely type this (making me roll my eyes)
+That moves the problem to printing, and visitors will absolutely type this (making me roll my eyes):
 
 ```lisp
 (let ((x (list 1 2 3)))
@@ -392,7 +392,7 @@ Both shell out through `uiop:run-program`, and the Docker one is mostly a list o
 No network means the socket can't be TCP, so it sits in a directory shared into the sandbox: a bind mount for Docker, nullfs for a jail.
 The gateway listens and the agent connects.
 That way the agent only needs `socket()` and `connect()`, the gateway never has to poll for a socket file to show up, and the shared directory can be mounted read-only, since the sandbox never creates anything in it.
-we haven't checked the file permissions on that socket yet: the gateway creates it, and the sandbox's user needs write permission on it to connect, which is a per-backend detail to verify.
+We haven't checked the file permissions on that socket yet: the gateway creates it, and the sandbox's user needs write permission on it to connect, which is a per-backend detail to verify.
 Docker also has no wall-clock limit of its own, so the gateway covers that with the max lifetime and `stop-sandbox`.
 
 ## Lessons
@@ -413,7 +413,7 @@ flowchart TB
 A lesson is a directory with Lisp source, optional prose, and a build step.
 You start inside the running image rather than reading a program, which is the other thing (besides the debugger) that makes CL feel different, and a lesson shipped as source to read would hide it.
 
-Only ANSwe CL, the agent and the lesson's own code go in the core.
+Only ANSI CL, the agent and the lesson's own code go in the core.
 No Quicklisp, no contribs, and the build fails if a contrib got loaded.
 If a lesson needs something beyond ANSI, the lesson writes it.
 A visitor who watches a library do the interesting part learned about the library.
@@ -426,7 +426,7 @@ SBCL is the only implementation on the server, pinned at the version in `sbcl-ve
 
 ## The Panel
 
-The Uwe is a scrollback, an input line with history, the debugger panel, and lesson prose next to it.
+The UI is a scrollback, an input line with history, the debugger panel, and lesson prose next to it.
 The panel is the part that matters, so any front end gets judged on it first.
 For a lesson with a planted bug it'd look something like:
 
@@ -466,7 +466,7 @@ These hold no matter what else changes, and breaking one is a design change, not
 - No socket is ever read with `*read-eval*` on.
 - No sandbox gets network.
 - The Lisp web server is only ever behind the proxy.
-- Nothing but ANSwe CL, the agent and the lesson goes in a lesson image.
+- Nothing but ANSI CL, the agent and the lesson goes in a lesson image.
 - Nothing about containment depends on Lisp.
 - Nothing goes on the internet until the sandbox limits are in.
 
