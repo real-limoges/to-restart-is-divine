@@ -13,4 +13,7 @@
   (:documentation "Answer the debugger level ID by invoking its restart number INDEX"))
 
 (defgeneric session-interrupt (session)
-  (:documentation "END SESSION - not events are sent after this returns"))
+  (:documentation "Interrupt whatever SESSION is evaluating"))
+
+(defgeneric session-close (session)
+  (:documentation "End SESSION. No events are sent after this returns"))

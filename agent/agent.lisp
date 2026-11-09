@@ -3,7 +3,7 @@
 
 (in-package #:to-restart-is-divine/agent)
 
-(defconstant +backtrace-frames+ 30
+(defconstant +max-backtrace-frames+ 30
   "Most frames :debug message brings")
 
 ;;; eval thread's dynamic state (but frozen).
@@ -28,7 +28,7 @@
 (defstruct (agent (:constructor %make-agent (stream)))
   (stream nil :read-only t)
   (send-lock (make-lock "agent send") :read-only t)
-  (connected t)
+  (connected-p t)
   (inbox (make-mailbox) :read-only t)
   (next-id 1)
   eval-thread
@@ -38,10 +38,10 @@
   "Send MESSAGE to the gateway. After a failed write, sending does nothing"
   (call-with-lock (agent-send-lock agent)
                   (lambda ()
-                    (when (agent-connected agent)
+                    (when (agent-connected-p agent)
                       (handler-case (write-message message (agent-stream agent))
                         (stream-error ()
-                          (setf (agent-connected agent) nil)))))))
+                          (setf (agent-connected-p agent) nil)))))))
 
 (defun eval-state-with (state &key (levels (eval-state-levels state))
                                 (top-level (eval-state-top-level state))
@@ -142,13 +142,13 @@ a restart."
     (finish-output *standard-output*)
     (send agent (list :debug
                       :id id
-                      :level (length levels)
+                      :depth (length levels)
                       :type (type-name condition)
                       :report (printed #'princ-to-string condition)
                       :restarts (loop for restart in restarts
                                       for index from 0
                                       collect (list index
-                                                    (restart-label-name restart)
+                                                    (restart-name-string restart)
                                                     (printed #'princ-to-string restart)))
                       :backtrace (backtrace)))
     (unwind-protect (serve-level agent)
@@ -179,7 +179,7 @@ Restarts beyond belong to the thread which would end the eval thread"
         (subseq restarts 0 (1+ end))
         restarts)))
 
-(defun restart-label-name (restart)
+(defun restart-name-string (restart)
   "RESTART's name as string (empty if anon)"
   (let ((name (restart-name restart)))
     (if name (symbol-name name) "")))
@@ -199,7 +199,7 @@ Restarts beyond belong to the thread which would end the eval thread"
   (let ((*print-length* 10)
         (*print-level* 4)
         (*print-circle* t))
-    (loop for call in (backtrace-calls 'evaluate-form +backtrace-frames+)
+    (loop for call in (backtrace-calls 'evaluate-form +max-backtrace-frames+)
           for index from 0
           collect (format nil "~D: ~A" index (printed #'prin1-to-string call)))))
 
@@ -243,6 +243,6 @@ Restarts beyond belong to the thread which would end the eval thread"
   (wait-for-thread (agent-eval-thread agent)))
 
 (defun run-agent (path)
-  "Serve gateway at PATH until it hands up. Entry point for agent"
+  "Serve gateway at PATH until it hangs up. Entry point for agent"
   (wait-for-agent (start-agent path))
   (exit-process))

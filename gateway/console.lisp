@@ -50,13 +50,13 @@
 ;;; Debugger staack
 
 (defstruct debug-level
-  id level type report restarts backtrace)
+  id depth type report restarts backtrace)
 
 (defun event-debug-level (event)
-  "The debug lvel a (:debug ...) EVENT describes"
-  (destructuring-bind (&key id level type report restarts backtrace &allow-other-keys)
+  "The debugger level a (:debug ...) EVENT describes"
+  (destructuring-bind (&key id depth type report restarts backtrace &allow-other-keys)
       (rest event)
-    (make-debug-level :id id :level level :type type :report report
+    (make-debug-level :id id :depth depth :type type :report report
                       :restarts restarts :backtrace backtrace)))
 
 (defun push-level (levels level)

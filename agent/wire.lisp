@@ -27,7 +27,7 @@
              (format stream "Malformed message: ~A." (malformed-message-reason condition)))))
 
 (defun malformed (control &rest arguments)
-  "Signal MALFORMED-MESSAGE with a reason from CONTROL and ARGUEMENTS./"
+  "Signal MALFORMED-MESSAGE with a reason from CONTROL and ARGUMENTS."
   (error 'malformed-message :reason (apply #'format nil control arguments)))
 
 (defun write-message (message stream)
@@ -51,13 +51,13 @@
   (unless (and (= (length prefix) +prefix-width+)
                (every (lambda (char) (digit-char-p char 16)) prefix))
     (malformed "the length of prefix ~S is not ~D hex digits" prefix +prefix-width+))
-  (let ((p-length (parse-integer prefix :radix 16)))
-    (when (> p-length *max-message-length*)
-      (malformed "~D characters is over the limit of ~D" p-length *max-message-length*))
-    p-length))
+  (let ((announced-length (parse-integer prefix :radix 16)))
+    (when (> announced-length *max-message-length*)
+      (malformed "~D characters is over the limit of ~D" announced-length *max-message-length*))
+    announced-length))
 
 (defun parse-message (text)
-  "The message TEXT prings, which must be one list headed by a single keyword.
+  "The message TEXT prints, which must be one list headed by a single keyword.
 Reads with *READ-EVAL* off in the standard syntax WRITE-MESSAGE prints with,
 so NIL reads back as NIL rather than :NIL."
   (multiple-value-bind (message end)

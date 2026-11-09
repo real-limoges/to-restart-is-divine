@@ -26,7 +26,7 @@
 (test catalog-round-trips
   (dolist (message '((:eval "(car 5)") (:invoke-restart 3 0) (:interrupt) (:ping)
                      (:ready) (:output "λ \"quoted\" \\ back") (:values ("3" "NIL")) (:values ())
-                     (:debug :id 1 :level 1 :type "TYPE-ERROR" :report "r"
+                     (:debug :id 1 :depth 1 :type "TYPE-ERROR" :report "r"
                              :restarts ((0 "ABORT" "Return to the top level.")) :backtrace ("0: (CAR 5)"))
                      (:debug-done 1) (:pong)))
     (is (equal message (unframed (framed message))))))

@@ -158,7 +158,7 @@ Roughly:
         (id (next-debug-id)))
     (send-message
      `(:debug :id ,id
-              :level ,*debug-level*
+              :depth ,*debug-depth*
               :type ,(prin1-to-string (type-of condition))
               :report ,(princ-to-string condition)
               :restarts ,(loop for r in restarts
@@ -196,10 +196,10 @@ sequenceDiagram
   participant G as Gateway
   participant A as Agent
   G->>A: (:eval "(foo)")
-  A->>G: (:debug :id 1 :level 1)
+  A->>G: (:debug :id 1 :depth 1)
   G->>A: (:eval "(bar)")
   Note over A: bar errors too,<br/>inside level 1
-  A->>G: (:debug :id 2 :level 2)
+  A->>G: (:debug :id 2 :depth 2)
   G->>A: ABORT on id 2
   A->>G: (:debug-done 2)
   A->>G: (:debug-done 1)
@@ -314,7 +314,7 @@ This is where it starts:
 | Up | `(:ready)` | Listening. |
 | Up | `(:output "text")` | A chunk of output. |
 | Up | `(:values ("printed value" ...))` | Printed values of a finished eval. |
-| Up | `(:debug :id ID :level N ...)` | A debugger level opened. |
+| Up | `(:debug :id ID :depth N ...)` | A debugger level opened. |
 | Up | `(:debug-done ID)` | That level closed. |
 | Up | `(:pong)` | Still here. |
 
@@ -413,10 +413,10 @@ flowchart TB
 A lesson is a directory with Lisp source, optional prose, and a build step.
 You start inside the running image rather than reading a program, which is the other thing (besides the debugger) that makes CL feel different, and a lesson shipped as source to read would hide it.
 
-Only ANSI CL, the agent and the lesson's own code go in the core.
-No Quicklisp, no contribs, and the build fails if a contrib got loaded.
-If a lesson needs something beyond ANSI, the lesson writes it.
-A visitor who watches a library do the interesting part learned about the library.
+Only ANSI CL, the agent, splice's two contrib-free systems (`splice` and `splice/cluster`) and the lesson's own code go in the core.
+No Quicklisp, no third-party library, no contribs, and the build fails if a contrib got loaded.
+If a lesson needs something beyond ANSI and splice, the lesson writes it.
+A visitor who watches a library do the interesting part learned about the library; splice is the exception because its interesting part is the condition system the site teaches.
 
 Cores are built once and never written to.
 Whether each lesson gets its own Docker image, or there's one SBCL image and the cores get mounted in read-only, is open; we lean toward the second, since then rebuilding a lesson doesn't mean rebuilding an image.
@@ -466,7 +466,7 @@ These hold no matter what else changes, and breaking one is a design change, not
 - No socket is ever read with `*read-eval*` on.
 - No sandbox gets network.
 - The Lisp web server is only ever behind the proxy.
-- Nothing but ANSI CL, the agent and the lesson goes in a lesson image.
+- Nothing but ANSI CL, the agent, splice's contrib-free systems and the lesson goes in a lesson image.
 - Nothing about containment depends on Lisp.
 - Nothing goes on the internet until the sandbox limits are in.
 
@@ -478,7 +478,7 @@ These hold no matter what else changes, and breaking one is a design change, not
   Closed by the hosting cost comparison; the runtime functions keep the gateway out of it until then.
 - **Gateway parser.**
   `cl:read` under tight bindings or the tiny parser.
-  Closed when the gateway's reading side gets written.
+  The reading side is written and uses `cl:read` for now; closed by a decision before visitor code in a sandbox is on the far end of the socket.
 - **Containers, gVisor or Firecracker.**
   Closed by the hardening tests once the prototype works.
 - **Memory per session and shared core pages.**

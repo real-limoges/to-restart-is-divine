@@ -6,7 +6,7 @@
 (in-suite agent-session)
 
 (defun waiting-recorder ()
-  "An event handler and a function returning the next even it was given.
+  "An event handler and a function returning the next event it was given.
 It waits up to 10 seconds"
   (let ((lock (sb-thread:make-mutex :name "recorder"))
         (arrived (sb-thread:make-waitqueue :name "recorder"))

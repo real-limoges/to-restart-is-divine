@@ -21,13 +21,13 @@ little extra for NUL")
 
 (defun socket-address (path)
   "PATH as a sockaddr_un: two-byte header, path, NUL-term"
-  (let ((name (sb-ext:string-to-octets path :external-format :utf-8 :null-terminate t)))
-    (when (> (length name) (1+ +max-socket-path+))
+  (let ((path-octets (sb-ext:string-to-octets path :external-format :utf-8 :null-terminate t)))
+    (when (> (length path-octets) (1+ +max-socket-path+))
       (error "The socket path ~A is longer than ~D octets." path +max-socket-path+))
     (concatenate '(vector (unsigned-byte 8))
                  #+linux (vector +af-unix+ 0) ; sun_family, little-endian short
-                 #-linux (vector (+ 2 (length name)) +af-unix+) ; sun_len, then sun_family
-                 name)))
+                 #-linux (vector (+ 2 (length path-octets)) +af-unix+) ; sun_len, then sun_family
+                 path-octets)))
 
 (defun connect-unix-socket (path)
   "Bidirectional UTF-8 character stream on unix socket at PATH"

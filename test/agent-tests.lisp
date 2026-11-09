@@ -51,32 +51,32 @@ After, hang up and wait fro the agent's thread to end"
 
 (test ping-answers-pong
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:ping))
-     (is (equal '(:pong) (next agent))))))
+   (lambda (stream)
+     (tell stream '(:ping))
+     (is (equal '(:pong) (next stream))))))
 
 (test eval-sends-printed-values
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(+ 1 2)"))
-     (is (equal '(:values ("3")) (next agent)))
-     (tell agent '(:eval "(values)"))
-     (is (equal '(:values ()) (next agent))))))
+   (lambda (stream)
+     (tell stream '(:eval "(+ 1 2)"))
+     (is (equal '(:values ("3")) (next stream)))
+     (tell stream '(:eval "(values)"))
+     (is (equal '(:values ()) (next stream))))))
 
 (test output-precedes-values
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(princ \"hi\")"))
-     (is (equal '(:output "hi") (next agent)))
-     (is (equal '(:values ("\"hi\"")) (next agent))))))
+   (lambda (stream)
+     (tell stream '(:eval "(princ \"hi\")"))
+     (is (equal '(:output "hi") (next stream)))
+     (is (equal '(:values ("\"hi\"")) (next stream))))))
 
 (test error-opens-level-one
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(car 5)"))
-     (destructuring-bind (head &key level type restarts backtrace &allow-other-keys) (next agent)
+   (lambda (stream)
+     (tell stream '(:eval "(car 5)"))
+     (destructuring-bind (head &key depth type restarts backtrace &allow-other-keys) (next stream)
        (is (eq :debug head))
-       (is (= 1 level))
+       (is (= 1 depth))
        (is (equal "TYPE-ERROR" type))
        (is (equal '(("RETRY" "Evaluate the form again.") ("ABORT" "Return to top level."))
                   (mapcar #'rest (last restarts 2))))
@@ -84,92 +84,92 @@ After, hang up and wait fro the agent's thread to end"
 
 (test abort-returns-to-top-level
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(car 5)"))
-     (let ((debug (next agent)))
-       (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
-       (is (equal (list :debug-done (debug-id debug)) (next agent))))
-     (tell agent '(:eval "(+ 1 2)"))
-     (is (equal '(:values ("3")) (next agent))))))
+   (lambda (stream)
+     (tell stream '(:eval "(car 5)"))
+     (let ((debug (next stream)))
+       (tell stream (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
+       (is (equal (list :debug-done (debug-id debug)) (next stream))))
+     (tell stream '(:eval "(+ 1 2)"))
+     (is (equal '(:values ("3")) (next stream))))))
 
 (test abort-closes-every-level
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(car 5)"))
-     (let ((outer (next agent)))
-       (tell agent '(:eval "(/ 1 0)"))
-       (let ((inner (next agent)))
-         (is (= 2 (getf (rest inner) :level)))
-         (tell agent (list :invoke-restart (debug-id inner) (restart-index inner "ABORT")))
-         (is (equal (list :debug-done (debug-id inner)) (next agent)))
-         (is (equal (list :debug-done (debug-id outer)) (next agent))))))))
+   (lambda (stream)
+     (tell stream '(:eval "(car 5)"))
+     (let ((outer (next stream)))
+       (tell stream '(:eval "(/ 1 0)"))
+       (let ((inner (next stream)))
+         (is (= 2 (getf (rest inner) :depth)))
+         (tell stream (list :invoke-restart (debug-id inner) (restart-index inner "ABORT")))
+         (is (equal (list :debug-done (debug-id inner)) (next stream)))
+         (is (equal (list :debug-done (debug-id outer)) (next stream))))))))
 
 (test inner-restart-closes-its-own-level
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(car 5)"))
-     (let ((outer (next agent)))
-       (tell agent '(:eval "(restart-case (error \"x\") (retreat () :report \"Back off.\" 42))"))
-       (let ((inner (next agent)))
-         (tell agent (list :invoke-restart (debug-id inner) (restart-index inner "RETREAT")))
-         (is (equal (list :debug-done (debug-id inner)) (next agent)))
-         (is (equal '(:values ("42")) (next agent)))
-         (tell agent (list :invoke-restart (debug-id outer) (restart-index outer "ABORT")))
-         (is (equal (list :debug-done (debug-id outer)) (next agent))))))))
+   (lambda (stream)
+     (tell stream '(:eval "(car 5)"))
+     (let ((outer (next stream)))
+       (tell stream '(:eval "(restart-case (error \"x\") (retreat () :report \"Back off.\" 42))"))
+       (let ((inner (next stream)))
+         (tell stream (list :invoke-restart (debug-id inner) (restart-index inner "RETREAT")))
+         (is (equal (list :debug-done (debug-id inner)) (next stream)))
+         (is (equal '(:values ("42")) (next stream)))
+         (tell stream (list :invoke-restart (debug-id outer) (restart-index outer "ABORT")))
+         (is (equal (list :debug-done (debug-id outer)) (next stream))))))))
 
 (test break-enters-the-agent-debugger
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(break)"))
-     (let ((debug (next agent)))
+   (lambda (stream)
+     (tell stream '(:eval "(break)"))
+     (let ((debug (next stream)))
        (is (eq :debug (first debug)))
-       (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "CONTINUE")))
-       (is (equal (list :debug-done (debug-id debug)) (next agent)))
-       (is (equal '(:values ("NIL")) (next agent)))))))
+       (tell stream (list :invoke-restart (debug-id debug) (restart-index debug "CONTINUE")))
+       (is (equal (list :debug-done (debug-id debug)) (next stream)))
+       (is (equal '(:values ("NIL")) (next stream)))))))
 
 (test interrupt-opens-a-level-over-a-running-loop
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(progn (princ \"go\") (finish-output) (loop))"))
-     (is (equal '(:output "go") (next agent)))
-     (tell agent '(:interrupt))
-     (let ((debug (next agent)))
+   (lambda (stream)
+     (tell stream '(:eval "(progn (princ \"go\") (finish-output) (loop))"))
+     (is (equal '(:output "go") (next stream)))
+     (tell stream '(:interrupt))
+     (let ((debug (next stream)))
        (is (equal "TO-RESTART-IS-DIVINE/AGENT:INTERRUPTED" (getf (rest debug) :type)))
        (is (equal "CONTINUE" (second (first (getf (rest debug) :restarts)))))
-       (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
-       (is (equal (list :debug-done (debug-id debug)) (next agent)))))))
+       (tell stream (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
+       (is (equal (list :debug-done (debug-id debug)) (next stream)))))))
 
 (test unreadable-text-opens-a-level
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "("))
-     (let ((debug (next agent)))
+   (lambda (stream)
+     (tell stream '(:eval "("))
+     (let ((debug (next stream)))
        (is (eq :debug (first debug)))
-       (tell agent (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
-       (is (equal (list :debug-done (debug-id debug)) (next agent)))))))
+       (tell stream (list :invoke-restart (debug-id debug) (restart-index debug "ABORT")))
+       (is (equal (list :debug-done (debug-id debug)) (next stream)))))))
 
 (test output-is-sent-before-the-debugger-opens
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(progn (princ \"a\") (car 5))"))
-     (is (equal '(:output "a") (next agent)))
-     (is (eq :debug (first (next agent)))))))
+   (lambda (stream)
+     (tell stream '(:eval "(progn (princ \"a\") (car 5))"))
+     (is (equal '(:output "a") (next stream)))
+     (is (eq :debug (first (next stream)))))))
 
 (test retry-after-redefining
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(defun f (x) (car x))"))
-     (is (equal '(:values ("F")) (next agent)))
-     (tell agent '(:eval "(f 5)"))
-     (let ((debug (next agent)))
-       (tell agent '(:eval "(defun f (x) (if (listp x) (car x) x))"))
-       (is (equal '(:values ("F")) (next-past-output agent)))
-       (tell agent(list :invoke-restart (debug-id debug) (restart-index debug "RETRY")))
-       (is (equal (list :debug-done (debug-id debug)) (next agent)))
-       (is (equal '(:values ("5")) (next agent)))))))
+   (lambda (stream)
+     (tell stream '(:eval "(defun f (x) (car x))"))
+     (is (equal '(:values ("F")) (next stream)))
+     (tell stream '(:eval "(f 5)"))
+     (let ((debug (next stream)))
+       (tell stream '(:eval "(defun f (x) (if (listp x) (car x) x))"))
+       (is (equal '(:values ("F")) (next-past-output stream)))
+       (tell stream(list :invoke-restart (debug-id debug) (restart-index debug "RETRY")))
+       (is (equal (list :debug-done (debug-id debug)) (next stream)))
+       (is (equal '(:values ("5")) (next stream)))))))
 
 (test circular-value-prints-with-labels
   (call-with-agent
-   (lambda (agent)
-     (tell agent '(:eval "(let ((x (list 1 2 3))) (setf (cdr (last x)) x))"))
-     (is (equal '(:values ("#1=(1 2 3 . #1#)")) (next agent))))))
+   (lambda (stream)
+     (tell stream '(:eval "(let ((x (list 1 2 3))) (setf (cdr (last x)) x))"))
+     (is (equal '(:values ("#1=(1 2 3 . #1#)")) (next stream))))))

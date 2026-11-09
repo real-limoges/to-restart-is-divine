@@ -17,11 +17,11 @@
   "A session on a fresh agent in a child SBCL. It reports to HANDLER"
   (let ((session (make-instance 'agent-session :link (ln:open-local-agent) :handler handler)))
     (setf (session-reader session)
-          (sb-thread:make-thread (lambda () (pump-events session)) :name "agent session reader"))
+          (sb-thread:make-thread (lambda () (event-loop session)) :name "agent session reader"))
     session))
 
-(defun pump-events (session)
-  "Hand each agent message to the handler until the agent hands up"
+(defun event-loop (session)
+  "Hand each agent message to the handler until the agent hangs up"
   (handler-case
       (loop for message = (w:read-message (ln:link-stream (session-link session)))
             while message
