@@ -1,29 +1,29 @@
-;;;; agent/agent.lisp: featuring REPL, debugger, and the message pump
+;;;; agent/agent.lisp: featuring REPL, debugger, and the thread that reads and dispatches messages
 
 
 (in-package #:to-restart-is-divine/agent)
 
 (defconstant +max-backtrace-frames+ 30
-  "Most frames :debug message brings")
+  "Most frames a :level-opened message carries")
 
-;;; eval thread's dynamic state (but frozen).
-;;; *EVAL-STATE* isn't assigned and only rebound with LET on the eval thread
+;;; The eval thread's dynamic state (read-only).
+;;; *EVAL-STATE* is never assigned, only rebound with LET on the eval thread,
 ;;; so it has a definite lifecycle. Everything else is an argument.
 
-(defstruct (eval-state (:constructor make-eval-state (&key levels top-level evaluating))
+(defstruct (eval-state (:constructor make-eval-state (&key levels top-level-abort evaluating))
                        (:copier nil))
   (levels '() :read-only t)
-  (top-level nil :read-only t)
+  (top-level-abort nil :read-only t)
   (evaluating nil :read-only t))
 
 (defvar *eval-state* (make-eval-state)
   "Eval thread's state. Global value is idle. No levels and not evaluating")
 
-;;; Each agent gets 2 threads. Reader reads every message from the gateway
+;;; Each agent gets 2 threads. The reader reads every message from the gateway.
 ;;; It answers :ping itself, turns :interrupt into an interrupt of the eval
 ;;; thread, and queues :eval and :invoke-restart in the inbox.
-;;; Eval thread takes messages from the inbox (wherever) and sends
-;;; everythign else to the gateway.
+;;; The eval thread takes messages from the inbox (at the top level or in a level)
+;;; and sends everything else to the gateway.
 
 (defstruct (agent (:constructor %make-agent (stream)))
   (stream nil :read-only t)
@@ -44,19 +44,14 @@
                           (setf (agent-connected-p agent) nil)))))))
 
 (defun eval-state-with (state &key (levels (eval-state-levels state))
-                                (top-level (eval-state-top-level state))
+                                (top-level-abort (eval-state-top-level-abort state))
                                 (evaluating (eval-state-evaluating state)))
   "Copy of STATE with the given fields replaced"
-  (make-eval-state :levels levels :top-level top-level :evaluating evaluating))
-
-;; (defvar *agent*)
-;; (defvar *levels*)                       ; open debugger levels, newest first
-;; (defvar *top-level*)                    ; ABORT restart returns to top level
-;; (defvar *evaluating*)                   ; true when visitor code runs so an interupt can open a level
+  (make-eval-state :levels levels :top-level-abort top-level-abort :evaluating evaluating))
 
 (define-condition interrupted (condition)
   ()
-  (:report "Interrupted from the page"))
+  (:report "Interrupted from the page."))
 
 (defun call-with-visitor-repl (output function)
   "Call FUNCTION inside the visitor's REPL environment. Every Standard Stream writes
@@ -87,13 +82,13 @@ to OUTPUT and reads nothing. CL-USER is current and REPL variables are empty"
                              (loop (serve-top-level agent))))))))
 
 (defun serve-top-level (agent)
-  "Take a message from the inbox at the top level. If the level is gone
-then it's ignored"
+  "Take a message from the inbox at the top level. A restart for a level that is gone
+is ignored"
   (let ((message (mailbox-receive (agent-inbox agent))))
     (when (eq (first message) :eval)
       (with-simple-restart (abort "Return to top level.")
         (let ((*eval-state* (eval-state-with *eval-state*
-                                             :top-level (find 'abort (compute-restarts) :key #'restart-name))))
+                                             :top-level-abort (find 'abort (compute-restarts) :key #'restart-name))))
           (evaluate agent (second message)))))))
 
 (defun evaluate (agent text)
@@ -104,7 +99,7 @@ then it's ignored"
             until (eq form in)
             do (setf - form)
                (let ((values (evaluate-form form)))
-                 (remember form values)
+                 (shift-repl-variables form values)
                  (finish-output *standard-output*)
                  (send agent (list :values (print-values values))))))))
 
@@ -117,13 +112,13 @@ Long or deep structures are cut short unless visitor has set their own limits"
     (mapcar #'prin1-to-string values)))
 
 (defun evaluate-form (form)
-  "FORM's values. A RETRY restart evaluates FORM again from the start."
+  "FORM's values. A RETRY restart evaluates FORM again from the start"
   (loop
     (restart-case (return (multiple-value-list (eval form)))
       (retry ()
         :report "Evaluate the form again."))))
 
-(defun remember (form values)
+(defun shift-repl-variables (form values)
   "Shift the REPL variables after FORM returned VALUES"
   (setf +++ ++ ++ + + form
         /// // // / / values
@@ -132,15 +127,14 @@ Long or deep structures are cut short unless visitor has set their own limits"
 ;; Debugger starts here
 
 (defun enter-debugger (agent condition)
-  "CONDITION is the new debugger level, and keep serving the inbox until
-a restart."
+  "Open CONDITION as a new debugger level and serve the inbox until a restart leaves it"
   (let* ((id (agent-next-id agent))
          (restarts (visible-restarts condition))
          (levels (cons (list id restarts) (eval-state-levels *eval-state*)))
          (*eval-state* (eval-state-with *eval-state* :levels levels :evaluating nil)))
     (setf (agent-next-id agent) (1+ id))
     (finish-output *standard-output*)
-    (send agent (list :debug
+    (send agent (list :level-opened
                       :id id
                       :depth (length levels)
                       :type (type-name condition)
@@ -151,11 +145,15 @@ a restart."
                                                     (restart-name-string restart)
                                                     (printed #'princ-to-string restart)))
                       :backtrace (backtrace)))
-    (unwind-protect (serve-level agent)
-      (send agent (list :debug-done id)))))
+    ;; SBCL binds the hook to NIL while it runs, so each level binds it
+    ;; again: an error inside an open level then opens the next level here too.
+    (unwind-protect
+         (call-with-debugger (lambda (inner) (enter-debugger agent inner))
+                             (lambda () (serve-level agent)))
+      (send agent (list :level-closed id)))))
 
 (defun serve-level (agent)
-  "Take messsages from inbox inside newest level until a restart"
+  "Take messages from the inbox inside the newest level until a restart"
   (loop
     (let ((message (mailbox-receive (agent-inbox agent))))
       (ecase (first message)
@@ -172,9 +170,9 @@ a restart."
 
 (defun visible-restarts (condition)
   "CONDITION's restarts (from the inside) ending at agent's top-level ABORT.
-Restarts beyond belong to the thread which would end the eval thread"
+Restarts beyond it belong to the thread and would end the eval thread"
   (let* ((restarts (compute-restarts condition))
-         (end (position (eval-state-top-level *eval-state*) restarts)))
+         (end (position (eval-state-top-level-abort *eval-state*) restarts)))
     (if end
         (subseq restarts 0 (1+ end))
         restarts)))
@@ -185,7 +183,7 @@ Restarts beyond belong to the thread which would end the eval thread"
     (if name (symbol-name name) "")))
 
 (defun type-name (condition)
-  "CONDITION's type, package-qualified unless its in CL-USER"
+  "CONDITION's type, package-qualified unless it's in CL-USER"
   (with-standard-io-syntax
     (prin1-to-string (type-of condition))))
 
@@ -210,12 +208,12 @@ Restarts beyond belong to the thread which would end the eval thread"
   (interrupt (agent-eval-thread agent)
              (lambda ()
                (when (eval-state-evaluating *eval-state*)
-                 (with-simple-restart (continue "Resume the interrupted eval")
+                 (with-simple-restart (continue "Resume the interrupted evaluation.")
                    (invoke-debugger (make-condition 'interrupted)))))))
 
 
 (defun reader-loop (agent)
-  "Pump messages from gateway until the socket closes, then end eval thread"
+  "Read and dispatch messages from gateway until the socket closes, then end eval thread"
   (unwind-protect
        (handler-case
            (loop for message = (read-message (agent-stream agent))
@@ -243,6 +241,6 @@ Restarts beyond belong to the thread which would end the eval thread"
   (wait-for-thread (agent-eval-thread agent)))
 
 (defun run-agent (path)
-  "Serve gateway at PATH until it hangs up. Entry point for agent"
+  "Answer the gateway at PATH until it hangs up, then exit the process. Entry point for agent"
   (wait-for-agent (start-agent path))
   (exit-process))

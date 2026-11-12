@@ -35,7 +35,7 @@
                 :components ((:file "web")))))
 
 (defsystem "to-restart-is-divine/link"
-  :description "The Gateway's End of the Agent Socket + Local Agent in Child SBCL"
+  :description "The Gateway's End of the Agent Socket + the Agent in Its Own SBCL Process"
   :depends-on ((:require "sb-bsd-sockets"))
   :components ((:module "gateway"
                 :components ((:file "link")))))
@@ -52,7 +52,8 @@
                              (:file "wire-tests")
                              (:file "agent-tests")
                              (:file "link-tests")
-                             (:file "agent-session-tests"))))
+                             (:file "agent-session-tests")
+                             (:file "fake-session"))))
   :perform (test-op (o c)
                     (declare (ignore o c))
                     (unless (uiop:symbol-call :fiveam :run!

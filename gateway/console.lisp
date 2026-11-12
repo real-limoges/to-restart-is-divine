@@ -1,8 +1,8 @@
-;;;; gateway/console.lisp: input history and debugger stack (as plain values)
+;;;; gateway/console.lisp: REPL line history and debugger stack (as plain values)
 
 (in-package #:to-restart-is-divine/gateway)
 
-;;; Input history
+;;; REPL line history
 
 (defstruct (history (:constructor %make-history (entries cursor)))
   (entries '() :read-only t)            ; submitted lines, newest first
@@ -27,11 +27,11 @@
                        (cons line entries))
                    nil)))
 
-;;; Step: One arrow key while recalling
-;;; (history) -> (values history line). LINE is what the input box shows now or NIL
+;;; Step: the transition for one arrow key while recalling
+;;; (history) -> (values history line). LINE is what the REPL line shows now or NIL
 
 (defun step-recall-older (history)
-  "Step to the next older entry and the line is NIL at the oldest"
+  "Go to the next older entry. The line is NIL at the oldest"
   (let* ((entries (history-entries history))
          (cursor (history-cursor history))
          (older (if cursor (1+ cursor) 0)))
@@ -40,20 +40,20 @@
         (values history nil))))
 
 (defun step-recall-newer (history)
-  "Step to the next newer entry. Past the newest, the line is empty and the cursor clears"
+  "Go to the next newer entry. Past the newest, the line is empty and the cursor clears"
   (let ((entries (history-entries history))
         (cursor (history-cursor history)))
     (cond ((null cursor) (values history nil))
           ((zerop cursor) (values (%make-history entries nil) ""))
           (t (values (%make-history entries (1- cursor)) (nth (1- cursor) entries))))))
 
-;;; Debugger staack
+;;; Debugger stack
 
 (defstruct debug-level
   id depth type report restarts backtrace)
 
 (defun event-debug-level (event)
-  "The debugger level a (:debug ...) EVENT describes"
+  "The debugger level a (:level-opened ...) EVENT describes"
   (destructuring-bind (&key id depth type report restarts backtrace &allow-other-keys)
       (rest event)
     (make-debug-level :id id :depth depth :type type :report report
@@ -63,10 +63,11 @@
   "LEVELS with LEVEL opened on top"
   (cons level levels))
 
-;;; Fold - Take one level-changing event into the stack
-;;; (levels ...) -> levels
+;;; Closing a level drops it and every newer one
+;;; (levels id) -> levels
 
-(defun fold-debug-done (levels id)
+(defun drop-level (levels id)
+  "LEVELS without level ID and every level newer than it. Unknown IDs change nothing"
   (let ((tail (member id levels :key #'debug-level-id)))
     (if tail
         (rest tail)

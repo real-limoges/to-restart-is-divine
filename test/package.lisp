@@ -8,7 +8,7 @@
                     (#:a #:to-restart-is-divine/agent)
                     (#:ln #:to-restart-is-divine/link)
                     (#:g #:to-restart-is-divine/gateway))
-  (:export #:divine-tests))
+  (:export #:divine-tests #:make-fake-session))
 
 (in-package #:to-restart-is-divine/tests)
 

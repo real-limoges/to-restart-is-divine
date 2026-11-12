@@ -68,7 +68,7 @@ flowchart TB
   end
   subgraph inside["Sandbox side"]
     agent["Agent reads<br/>and evals it"]
-    reply["Reply frame"]
+    reply["Reply message"]
   end
   typed --> wrap --> agent
   agent --> reply --> parse --> state
@@ -80,11 +80,11 @@ flowchart TB
 The gateway never calls `read` or `eval` on anything a visitor typed.
 It puts the text in a string inside `:eval` and forwards it, and the only `read` that ever touches it happens inside the sandbox.
 
-**Coming out, any frame could be forged.**
-Visitor code can write whatever the hell it likes to the socket, so the gateway reads agent frames the way it would read anything off the internet.
+**Coming out, any message could be forged.**
+Visitor code can write whatever the hell it likes to the socket, so the gateway reads agent messages the way it would read anything off the internet.
 `*read-eval*` is bound to `nil` on every read (on both ends), but that alone doesn't cover it.
-You can forge a frame that can still intern a pile of symbols, nest a million parens deep, or claim a length of four gigabytes.
-The gateway will cap the frame length before it reads anything, and for now reads with only the keyword package current.
+You can forge a message that can still intern a pile of symbols, nest a million parens deep, or claim a length of four gigabytes.
+The gateway will cap the message length before it reads anything, and for now reads with only the keyword package current.
 That still lets a forged `cl-user::x` intern into a real package, and every new keyword sticks around, which is why the reader isn't settled.
 Whether I use `cl:read` under tight bindings or a tiny parser that only knows keywords, strings, integers and lists is open.
 We lean toward the tiny parser, since the message shapes are small and fixed and then there's nothing to reason about.
@@ -138,11 +138,11 @@ sequenceDiagram
   B->>G: types (car 5)
   G->>A: (:eval "(car 5)")
   Note over A: TYPE-ERROR,<br/>hook runs
-  A->>G: (:debug :id 1 ...)
+  A->>G: (:level-opened :id 1 ...)
   G->>B: Debugger panel
   B->>G: Clicks a restart
   G->>A: (:invoke-restart 1 N)
-  A->>G: (:debug-done 1)
+  A->>G: (:level-closed 1)
   G->>B: Panel closes
 ```
 
@@ -155,9 +155,9 @@ Roughly:
 (defun agent-debugger-hook (condition old-hook)
   (declare (ignore old-hook))
   (let ((restarts (compute-restarts condition))
-        (id (next-debug-id)))
+        (id (next-level-id)))
     (send-message
-     `(:debug :id ,id
+     `(:level-opened :id ,id
               :depth ,*debug-depth*
               :type ,(prin1-to-string (type-of condition))
               :report ,(princ-to-string condition)
@@ -196,13 +196,13 @@ sequenceDiagram
   participant G as Gateway
   participant A as Agent
   G->>A: (:eval "(foo)")
-  A->>G: (:debug :id 1 :depth 1)
+  A->>G: (:level-opened :id 1 :depth 1)
   G->>A: (:eval "(bar)")
   Note over A: bar errors too,<br/>inside level 1
-  A->>G: (:debug :id 2 :depth 2)
+  A->>G: (:level-opened :id 2 :depth 2)
   G->>A: ABORT on id 2
-  A->>G: (:debug-done 2)
-  A->>G: (:debug-done 1)
+  A->>G: (:level-closed 2)
+  A->>G: (:level-closed 1)
 ```
 
 `ABORT` is always on the list and always goes back to the top-level REPL, and it closes each and every open level on the way out.
@@ -233,13 +233,13 @@ Two additional threads.
 `:interrupt` has to arrive while the eval thread is busy running a `(loop)`, so something other than the eval thread has to be reading the socket.
 
 - **Reader thread.**
-  Reads frames, answers `:ping` itself, and handles `:interrupt` by calling `sb-thread:interrupt-thread` on the eval thread.
+  Reads messages, answers `:ping` itself, and handles `:interrupt` by calling `sb-thread:interrupt-thread` on the eval thread.
   Everything else goes into the inbox.
 - **Eval thread.**
   Pulls from the inbox, evaluates, sends `:values`.
   It also runs the debugger loop above, which pulls from the same inbox.
 - **Output.**
-  `*standard-output*` and `*error-output*` are bound to streams that send `:output` frames.
+  `*standard-output*` and `*error-output*` are bound to streams that send `:output` messages.
   Both threads write to the socket, so writes go through one mutex (unless we can figure out a mutexless setup).
 
 The agent can't use a socket or JSON library (nothing beyond ANSI goes in the image), so it frames its own messages.
@@ -260,7 +260,7 @@ sequenceDiagram
   Note over A: spinning
   G->>A: (:interrupt)
   Note over A: reader interrupts<br/>eval thread
-  A->>G: (:debug :id 1 ...)
+  A->>G: (:level-opened :id 1 ...)
   Note over G: continue or abort
 ```
 
@@ -275,11 +275,11 @@ These are fixed:
 |---|---|
 | Transport | One unix socket per session, in a directory shared into the sandbox. |
 | Encoding | One S-expression per message, headed by a keyword. |
-| Framing | A length prefix on every frame, modeled on Swank's fixed-width hex. |
+| Framing | A length prefix on every message, modeled on Swank's fixed-width hex. |
 | Reading | `*read-eval*` bound to `nil` on every read, both ends. |
 | Opacity | Visitor code rides as a string inside `:eval`; the gateway never parses it. |
 
-A frame on the wire: six lowercase hex digits, Swank's width, then the printed form:
+A message on the wire: six lowercase hex digits, Swank's width, then the printed form:
 
 ```
 000011(:eval "(car 5)")
@@ -287,7 +287,7 @@ A frame on the wire: six lowercase hex digits, Swank's width, then the printed f
 
 ```lisp
 ;; sketch: NOT real code
-(defun write-frame (message stream)
+(defun write-message (message stream)
   (let ((text (with-standard-io-syntax
                 (let ((*package* (find-package :keyword)))
                   (prin1-to-string message)))))
@@ -308,14 +308,14 @@ This is where it starts:
 | Direction | Message | Meaning |
 |---|---|---|
 | Down | `(:eval "form string")` | Read and evaluate the visitor's text. |
-| Down | `(:invoke-restart ID INDEX)` | Answer the open `:debug` with that id. |
+| Down | `(:invoke-restart ID INDEX)` | Answer the open `:level-opened` with that id. |
 | Down | `(:interrupt)` | Interrupt the eval thread. |
 | Down | `(:ping)` | Still there? |
 | Up | `(:ready)` | Listening. |
 | Up | `(:output "text")` | A chunk of output. |
 | Up | `(:values ("printed value" ...))` | Printed values of a finished eval. |
-| Up | `(:debug :id ID :depth N ...)` | A debugger level opened. |
-| Up | `(:debug-done ID)` | That level closed. |
+| Up | `(:level-opened :id ID :depth N ...)` | A debugger level opened. |
+| Up | `(:level-closed ID)` | That level closed. |
 | Up | `(:pong)` | Still here. |
 
 ## Printing
@@ -426,7 +426,7 @@ SBCL is the only implementation on the server, pinned at the version in `sbcl-ve
 
 ## The Panel
 
-The UI is a scrollback, an input line with history, the debugger panel, and lesson prose next to it.
+The UI is a scrollback, a REPL line with history, the debugger panel, and lesson prose next to it.
 The panel is the part that matters, so any front end gets judged on it first.
 For a lesson with a planted bug it'd look something like:
 
