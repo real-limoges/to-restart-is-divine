@@ -5,11 +5,11 @@
 (def-suite agent-session :in divine-tests)
 (in-suite agent-session)
 
-(defun waiting-recorder ()
-  "An event handler and a function returning the next even it was given.
+(defun event-capture ()
+  "An event receiver and a function returning the next event it was given.
 It waits up to 10 seconds"
-  (let ((lock (sb-thread:make-mutex :name "recorder"))
-        (arrived (sb-thread:make-waitqueue :name "recorder"))
+  (let ((lock (sb-thread:make-mutex :name "event capture"))
+        (arrived (sb-thread:make-waitqueue :name "event capture"))
         (events '()))
     (values (lambda (event)
               (sb-thread:with-mutex (lock)
@@ -23,8 +23,8 @@ It waits up to 10 seconds"
                 (pop events))))))
 
 (test agent-session-recovers-from-an-error
-  (multiple-value-bind (handler next-event) (waiting-recorder)
-    (let ((session (g:make-local-agent-session handler)))
+  (multiple-value-bind (receiver next-event) (event-capture)
+    (let ((session (g:start-agent-session receiver)))
       (unwind-protect
            (progn
              (is (equal '(:ready) (funcall next-event)))
@@ -34,11 +34,11 @@ It waits up to 10 seconds"
                                          (g:debug-level-id level)
                                          (first (find "ABORT" (g:debug-level-restarts level)
                                                       :key #'second :test #'string=)))
-               (is (equal (list :debug-done (g:debug-level-id level)) (funcall next-event)))))
+               (is (equal (list :level-closed (g:debug-level-id level)) (funcall next-event)))))
         (g:session-close session)))))
 
 (test closed-session-ignores-calls
-  (let ((session (g:make-local-agent-session (lambda (event) (declare (ignore event))))))
+  (let ((session (g:start-agent-session (lambda (event) (declare (ignore event))))))
     (g:session-close session)
     (finishes (g:session-eval session "(+ 1 2)"))
     (finishes (g:session-interrupt session))))

@@ -7,16 +7,16 @@
 (in-package #:to-restart-is-divine/wire)
 
 
-;;; Messages are one S-expression each whose head is a keyword.
-;;; On the wire its six lowercase hex digits which has its length
-;;; in characters
+;;; Messages are one S-expression each whose kind, its first element, is a keyword.
+;;; On the wire each one is six lowercase hex digits giving its length
+;;; in characters, then the text
 ;;;
 ;;;   00000e(:values ("3"))
 ;;;
-;;; Both ends open the socket as UTF-8 char stream so counts characters not octets.
+;;; Both ends open the socket as a UTF-8 char stream, so lengths count characters not octets.
 
 (defconstant +prefix-width+ 6
-  "Hex digits in len prefix.")
+  "Hex digits in the length prefix")
 
 (defparameter *max-message-length* (expt 2 20)
   "The absolute longest printed message read or written (in characters)")
@@ -27,11 +27,11 @@
              (format stream "Malformed message: ~A." (malformed-message-reason condition)))))
 
 (defun malformed (control &rest arguments)
-  "Signal MALFORMED-MESSAGE with a reason from CONTROL and ARGUEMENTS./"
+  "Signal MALFORMED-MESSAGE with a reason from CONTROL and ARGUMENTS"
   (error 'malformed-message :reason (apply #'format nil control arguments)))
 
 (defun write-message (message stream)
-  "Write MESSAGE to STREAM with len prefix, then force it out"
+  "Write MESSAGE to STREAM with its length prefix, then force it out"
   (let ((text (with-standard-io-syntax
                 (let ((*print-case* :downcase))
                   (prin1-to-string message)))))
@@ -50,16 +50,16 @@
   "Message length PREFIX announces"
   (unless (and (= (length prefix) +prefix-width+)
                (every (lambda (char) (digit-char-p char 16)) prefix))
-    (malformed "the length of prefix ~S is not ~D hex digits" prefix +prefix-width+))
-  (let ((p-length (parse-integer prefix :radix 16)))
-    (when (> p-length *max-message-length*)
-      (malformed "~D characters is over the limit of ~D" p-length *max-message-length*))
-    p-length))
+    (malformed "the length prefix ~S is not ~D hex digits" prefix +prefix-width+))
+  (let ((announced-length (parse-integer prefix :radix 16)))
+    (when (> announced-length *max-message-length*)
+      (malformed "~D characters is over the limit of ~D" announced-length *max-message-length*))
+    announced-length))
 
 (defun parse-message (text)
-  "The message TEXT prings, which must be one list headed by a single keyword.
+  "The message TEXT prints, which must be one list headed by a single keyword.
 Reads with *READ-EVAL* off in the standard syntax WRITE-MESSAGE prints with,
-so NIL reads back as NIL rather than :NIL."
+so NIL reads back as NIL rather than :NIL"
   (multiple-value-bind (message end)
       (handler-case (with-standard-io-syntax
                       (let ((*read-eval* nil))
@@ -73,7 +73,7 @@ so NIL reads back as NIL rather than :NIL."
     message))
 
 (defun read-message (stream)
-  "The next message on STREAM or NIL if STREAM ends cleanly before"
+  "The next message on STREAM, or NIL if STREAM ends cleanly before one starts"
   (let ((prefix (read-chars stream +prefix-width+)))
     (if (zerop (length prefix))
         nil

@@ -6,9 +6,9 @@
    ;; session.lisp
    #:session #:session-eval #:session-invoke-restart #:session-interrupt #:session-close
    ;; agent-session.lisp
-   #:agent-session #:make-local-agent-session
+   #:agent-session #:start-agent-session
    ;; console.lisp
    #:history #:history-entries #:history-cursor #:make-history #:fold-submitted-line #:step-recall-older #:step-recall-newer #:blank-line-p
-   #:debug-level #:make-debug-level #:debug-level-id #:debug-level-level #:debug-level-type
+   #:debug-level #:make-debug-level #:debug-level-id #:debug-level-depth #:debug-level-type
    #:debug-level-report #:debug-level-restarts #:debug-level-backtrace
-   #:event-debug-level #:push-level #:fold-debug-done #:restart-label #:values-lines))
+   #:event-debug-level #:push-level #:drop-level #:restart-label #:values-lines))

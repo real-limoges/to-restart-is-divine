@@ -68,7 +68,7 @@ flowchart TB
   end
   subgraph inside["Sandbox side"]
     agent["Agent reads<br/>and evals it"]
-    reply["Reply frame"]
+    reply["Reply message"]
   end
   typed --> wrap --> agent
   agent --> reply --> parse --> state
@@ -80,11 +80,11 @@ flowchart TB
 The gateway never calls `read` or `eval` on anything a visitor typed.
 It puts the text in a string inside `:eval` and forwards it, and the only `read` that ever touches it happens inside the sandbox.
 
-**Coming out, any frame could be forged.**
-Visitor code can write whatever the hell it likes to the socket, so the gateway reads agent frames the way it would read anything off the internet.
+**Coming out, any message could be forged.**
+Visitor code can write whatever the hell it likes to the socket, so the gateway reads agent messages the way it would read anything off the internet.
 `*read-eval*` is bound to `nil` on every read (on both ends), but that alone doesn't cover it.
-You can forge a frame that can still intern a pile of symbols, nest a million parens deep, or claim a length of four gigabytes.
-The gateway will cap the frame length before it reads anything, and for now reads with only the keyword package current.
+You can forge a message that can still intern a pile of symbols, nest a million parens deep, or claim a length of four gigabytes.
+The gateway will cap the message length before it reads anything, and for now reads with only the keyword package current.
 That still lets a forged `cl-user::x` intern into a real package, and every new keyword sticks around, which is why the reader isn't settled.
 Whether I use `cl:read` under tight bindings or a tiny parser that only knows keywords, strings, integers and lists is open.
 We lean toward the tiny parser, since the message shapes are small and fixed and then there's nothing to reason about.
@@ -138,11 +138,11 @@ sequenceDiagram
   B->>G: types (car 5)
   G->>A: (:eval "(car 5)")
   Note over A: TYPE-ERROR,<br/>hook runs
-  A->>G: (:debug :id 1 ...)
+  A->>G: (:level-opened :id 1 ...)
   G->>B: Debugger panel
   B->>G: Clicks a restart
   G->>A: (:invoke-restart 1 N)
-  A->>G: (:debug-done 1)
+  A->>G: (:level-closed 1)
   G->>B: Panel closes
 ```
 
@@ -155,10 +155,10 @@ Roughly:
 (defun agent-debugger-hook (condition old-hook)
   (declare (ignore old-hook))
   (let ((restarts (compute-restarts condition))
-        (id (next-debug-id)))
+        (id (next-level-id)))
     (send-message
-     `(:debug :id ,id
-              :level ,*debug-level*
+     `(:level-opened :id ,id
+              :depth ,*debug-depth*
               :type ,(prin1-to-string (type-of condition))
               :report ,(princ-to-string condition)
               :restarts ,(loop for r in restarts
@@ -196,13 +196,13 @@ sequenceDiagram
   participant G as Gateway
   participant A as Agent
   G->>A: (:eval "(foo)")
-  A->>G: (:debug :id 1 :level 1)
+  A->>G: (:level-opened :id 1 :depth 1)
   G->>A: (:eval "(bar)")
   Note over A: bar errors too,<br/>inside level 1
-  A->>G: (:debug :id 2 :level 2)
+  A->>G: (:level-opened :id 2 :depth 2)
   G->>A: ABORT on id 2
-  A->>G: (:debug-done 2)
-  A->>G: (:debug-done 1)
+  A->>G: (:level-closed 2)
+  A->>G: (:level-closed 1)
 ```
 
 `ABORT` is always on the list and always goes back to the top-level REPL, and it closes each and every open level on the way out.
@@ -233,13 +233,13 @@ Two additional threads.
 `:interrupt` has to arrive while the eval thread is busy running a `(loop)`, so something other than the eval thread has to be reading the socket.
 
 - **Reader thread.**
-  Reads frames, answers `:ping` itself, and handles `:interrupt` by calling `sb-thread:interrupt-thread` on the eval thread.
+  Reads messages, answers `:ping` itself, and handles `:interrupt` by calling `sb-thread:interrupt-thread` on the eval thread.
   Everything else goes into the inbox.
 - **Eval thread.**
   Pulls from the inbox, evaluates, sends `:values`.
   It also runs the debugger loop above, which pulls from the same inbox.
 - **Output.**
-  `*standard-output*` and `*error-output*` are bound to streams that send `:output` frames.
+  `*standard-output*` and `*error-output*` are bound to streams that send `:output` messages.
   Both threads write to the socket, so writes go through one mutex (unless we can figure out a mutexless setup).
 
 The agent can't use a socket or JSON library (nothing beyond ANSI goes in the image), so it frames its own messages.
@@ -260,7 +260,7 @@ sequenceDiagram
   Note over A: spinning
   G->>A: (:interrupt)
   Note over A: reader interrupts<br/>eval thread
-  A->>G: (:debug :id 1 ...)
+  A->>G: (:level-opened :id 1 ...)
   Note over G: continue or abort
 ```
 
@@ -275,11 +275,11 @@ These are fixed:
 |---|---|
 | Transport | One unix socket per session, in a directory shared into the sandbox. |
 | Encoding | One S-expression per message, headed by a keyword. |
-| Framing | A length prefix on every frame, modeled on Swank's fixed-width hex. |
+| Framing | A length prefix on every message, modeled on Swank's fixed-width hex. |
 | Reading | `*read-eval*` bound to `nil` on every read, both ends. |
 | Opacity | Visitor code rides as a string inside `:eval`; the gateway never parses it. |
 
-A frame on the wire: six lowercase hex digits, Swank's width, then the printed form:
+A message on the wire: six lowercase hex digits, Swank's width, then the printed form:
 
 ```
 000011(:eval "(car 5)")
@@ -287,7 +287,7 @@ A frame on the wire: six lowercase hex digits, Swank's width, then the printed f
 
 ```lisp
 ;; sketch: NOT real code
-(defun write-frame (message stream)
+(defun write-message (message stream)
   (let ((text (with-standard-io-syntax
                 (let ((*package* (find-package :keyword)))
                   (prin1-to-string message)))))
@@ -308,14 +308,14 @@ This is where it starts:
 | Direction | Message | Meaning |
 |---|---|---|
 | Down | `(:eval "form string")` | Read and evaluate the visitor's text. |
-| Down | `(:invoke-restart ID INDEX)` | Answer the open `:debug` with that id. |
+| Down | `(:invoke-restart ID INDEX)` | Answer the open `:level-opened` with that id. |
 | Down | `(:interrupt)` | Interrupt the eval thread. |
 | Down | `(:ping)` | Still there? |
 | Up | `(:ready)` | Listening. |
 | Up | `(:output "text")` | A chunk of output. |
 | Up | `(:values ("printed value" ...))` | Printed values of a finished eval. |
-| Up | `(:debug :id ID :level N ...)` | A debugger level opened. |
-| Up | `(:debug-done ID)` | That level closed. |
+| Up | `(:level-opened :id ID :depth N ...)` | A debugger level opened. |
+| Up | `(:level-closed ID)` | That level closed. |
 | Up | `(:pong)` | Still here. |
 
 ## Printing
@@ -413,20 +413,20 @@ flowchart TB
 A lesson is a directory with Lisp source, optional prose, and a build step.
 You start inside the running image rather than reading a program, which is the other thing (besides the debugger) that makes CL feel different, and a lesson shipped as source to read would hide it.
 
-Only ANSI CL, the agent and the lesson's own code go in the core.
-No Quicklisp, no contribs, and the build fails if a contrib got loaded.
-If a lesson needs something beyond ANSI, the lesson writes it.
-A visitor who watches a library do the interesting part learned about the library.
+Only ANSI CL, the agent, splice's two contrib-free systems (`splice` and `splice/cluster`) and the lesson's own code go in the core.
+No Quicklisp, no third-party library, no contribs, and the build fails if a contrib got loaded.
+If a lesson needs something beyond ANSI and splice, the lesson writes it.
+A visitor who watches a library do the interesting part learned about the library; splice is the exception because its interesting part is the condition system the site teaches.
 
 Cores are built once and never written to.
 Whether each lesson gets its own Docker image, or there's one SBCL image and the cores get mounted in read-only, is open; we lean toward the second, since then rebuilding a lesson doesn't mean rebuilding an image.
 
 Core size and per-session memory decide how many sessions fit on one box, and whether sessions can share the core's pages is the number we most want to see.
-SBCL is the only implementation on the server, pinned at the version in `sbcl-version` at the repo root (2.6.9).
+SBCL is the only implementation on the server, pinned at the version in `sbcl-version` at the repo root (2.6.10).
 
 ## The Panel
 
-The UI is a scrollback, an input line with history, the debugger panel, and lesson prose next to it.
+The UI is a scrollback, a REPL line with history, the debugger panel, and lesson prose next to it.
 The panel is the part that matters, so any front end gets judged on it first.
 For a lesson with a planted bug it'd look something like:
 
@@ -443,8 +443,10 @@ For a lesson with a planted bug it'd look something like:
 +-------------------------------------------------------+
 ```
 
-CLOG (drives the DOM from Lisp over a websocket) is the first thing we try.
-If it fights a REPL widget, the fallback is a small hand-written JS terminal and Spinneret pages.
+CLOG (drives the DOM from Lisp over a websocket) drives the page.
+The one exception is the REPL line, a `<textarea>` with a short hand-written key script (`repl-line-script` in `gateway/web.lisp`).
+On Enter the script takes and clears the text in the browser and sends it up as an event, so typing during a round trip is never mixed into the submitted line, and Shift+Enter inserts a newline.
+History stays in Lisp, so each ArrowUp costs one round trip.
 
 ## Layout
 
@@ -466,7 +468,7 @@ These hold no matter what else changes, and breaking one is a design change, not
 - No socket is ever read with `*read-eval*` on.
 - No sandbox gets network.
 - The Lisp web server is only ever behind the proxy.
-- Nothing but ANSI CL, the agent and the lesson goes in a lesson image.
+- Nothing but ANSI CL, the agent, splice's contrib-free systems and the lesson goes in a lesson image.
 - Nothing about containment depends on Lisp.
 - Nothing goes on the internet until the sandbox limits are in.
 
@@ -478,7 +480,7 @@ These hold no matter what else changes, and breaking one is a design change, not
   Closed by the hosting cost comparison; the runtime functions keep the gateway out of it until then.
 - **Gateway parser.**
   `cl:read` under tight bindings or the tiny parser.
-  Closed when the gateway's reading side gets written.
+  The reading side is written and uses `cl:read` for now; closed by a decision before visitor code in a sandbox is on the far end of the socket.
 - **Containers, gVisor or Firecracker.**
   Closed by the hardening tests once the prototype works.
 - **Memory per session and shared core pages.**

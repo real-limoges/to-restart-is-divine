@@ -17,17 +17,17 @@ little extra for NUL")
   (domain sb-alien:int) (type sb-alien:int) (protocol sb-alien:int))
 
 (sb-alien:define-alien-routine ("connect" %connect) sb-alien:int
-  (fd sb-alien:int) (address sb-alien:system-area-pointer) (length sb-alien:unsigned-int))
+  (fd sb-alien:int) (address sb-alien:system-area-pointer) (length (sb-alien:unsigned 32)))
 
 (defun socket-address (path)
   "PATH as a sockaddr_un: two-byte header, path, NUL-term"
-  (let ((name (sb-ext:string-to-octets path :external-format :utf-8 :null-terminate t)))
-    (when (> (length name) (1+ +max-socket-path+))
+  (let ((path-octets (sb-ext:string-to-octets path :external-format :utf-8 :null-terminate t)))
+    (when (> (length path-octets) (1+ +max-socket-path+))
       (error "The socket path ~A is longer than ~D octets." path +max-socket-path+))
     (concatenate '(vector (unsigned-byte 8))
                  #+linux (vector +af-unix+ 0) ; sun_family, little-endian short
-                 #-linux (vector (+ 2 (length name)) +af-unix+) ; sun_len, then sun_family
-                 name)))
+                 #-linux (vector (+ 2 (length path-octets)) +af-unix+) ; sun_len, then sun_family
+                 path-octets)))
 
 (defun connect-unix-socket (path)
   "Bidirectional UTF-8 character stream on unix socket at PATH"
@@ -63,7 +63,7 @@ little extra for NUL")
 
 (defun interrupt (thread function)
   "Run FUNCTION in THREAD as soon as it can be interrupted, with
-interupts enabled inside"
+interrupts enabled inside"
   (sb-thread:interrupt-thread thread
                               (lambda ()
                                 (sb-sys:with-interrupts (funcall function)))))
@@ -75,7 +75,7 @@ interupts enabled inside"
   (sb-thread:make-mutex :name name))
 
 (defun call-with-lock (lock function)
-  "Call FUNCTION holding LOCK. Interrupts wait until LOCK is released."
+  "Call FUNCTION holding LOCK. Interrupts wait until LOCK is released"
   (sb-sys:without-interrupts
       (sb-thread:with-mutex (lock)
         (funcall function))))
@@ -110,7 +110,7 @@ interupts enabled inside"
   (:documentation "An output stream that hands text to SINK, one line at a time"))
 
 (defun make-forwarding-stream (sink)
-  "An output stream whose text is passed to SINK. Function of one string"
+  "An output stream whose text is passed to SINK, a function of one string"
   (make-instance 'forwarding-stream :sink sink))
 
 (defun flush-stream (stream)
@@ -125,7 +125,7 @@ interupts enabled inside"
 
 (defmethod sb-gray:stream-write-char ((stream forwarding-stream) char)
   (vector-push-extend char (stream-buffer stream))
-  (setf (stream-column stream) (if (char= char #\Newline) 0 (stream-column stream)))
+  (setf (stream-column stream) (if (char= char #\Newline) 0 (1+ (stream-column stream))))
   (when (or (char= char #\Newline)
             (>= (length (stream-buffer stream)) +output-chunk+))
     (flush-stream stream))
@@ -144,19 +144,15 @@ interupts enabled inside"
 
 ;; Debug stuff
 
-(defun call-with-debugger (debugger function)
-  "Call FUNCTION with DEBUGGER. Function is one condition run on every entry
+(defun call-with-debugger (on-debug function)
+  "Call FUNCTION with ON-DEBUG, a function of one condition, run on every entry
 to the debugger. SBCL's hook is used because BREAK binds *DEBUGGER-HOOK* to nil,
 which is nifty"
-  (labels ((hook (condition previous)
-             (declare (ignore previous))
-             ;; SBCL binds the hook to NIL while it runs; rebind it so
-             ;; an error inside an open level opens the next level here too.
-             (let ((sb-ext:*invoke-debugger-hook* #'hook))
-               (funcall debugger condition))))
-    (let ((sb-ext:*invoke-debugger-hook* #'hook)
-          (*debugger-hook* nil))
-      (funcall function))))
+  (let ((sb-ext:*invoke-debugger-hook* (lambda (condition hook)
+                                         (declare (ignore hook))
+                                         (funcall on-debug condition)))
+        (*debugger-hook* nil))
+    (funcall function)))
 
 (defun backtrace-calls (stop-at count)
   "Up to COUNT frames as call forms (newest first). Ends before the

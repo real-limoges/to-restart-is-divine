@@ -2,47 +2,47 @@
 
 (in-package #:to-restart-is-divine/gateway)
 
-;;; Agent messages are already in the event shapes dictated by session.lisp
-;;; They pass to the handler unchange. :pong is not an event
+;;; Agent messages are already in the event shapes session.lisp lists, so
+;;; they pass to the receiver unchanged. :pong is not an event
 
 (defclass agent-session (session)
-  ((link :initarg :link :reader session-link)
-   (handler :initarg :handler :reader session-handler)
-   (send-lock :initform (sb-thread:make-mutex :name "agent session send") :reader session-send-lock)
-   (closed :initform nil :accessor session-closed-p)
-   (reader :accessor session-reader))
-  (:documentation "A session on one agent - it's reached over its link"))
+  ((link :initarg :link :reader agent-session-link)
+   (receiver :initarg :receiver :reader session-receiver)
+   (send-lock :initform (sb-thread:make-mutex :name "agent session send") :reader agent-session-send-lock)
+   (closed :initform nil :accessor agent-session-closed-p)
+   (event-thread :accessor agent-session-event-thread))
+  (:documentation "A session on one agent, reached over its link"))
 
-(defun make-local-agent-session (handler)
-  "A session on a fresh agent in a child SBCL. It reports to HANDLER"
-  (let ((session (make-instance 'agent-session :link (ln:open-local-agent) :handler handler)))
-    (setf (session-reader session)
-          (sb-thread:make-thread (lambda () (pump-events session)) :name "agent session reader"))
+(defun start-agent-session (receiver)
+  "A session on a fresh agent in its own SBCL process. It reports to RECEIVER"
+  (let ((session (make-instance 'agent-session :link (ln:open-agent-process) :receiver receiver)))
+    (setf (agent-session-event-thread session)
+          (sb-thread:make-thread (lambda () (event-loop session)) :name "agent session events"))
     session))
 
-(defun pump-events (session)
-  "Hand each agent message to the handler until the agent hands up"
+(defun event-loop (session)
+  "Hand each agent message to the receiver until the agent hangs up"
   (handler-case
-      (loop for message = (w:read-message (ln:link-stream (session-link session)))
+      (loop for message = (w:read-message (ln:link-stream (agent-session-link session)))
             while message
             unless (eq (first message) :pong)
               do (deliver session message))
     (error (condition)
-      (unless (session-closed-p session)
-        (format *error-output* "~&;; Agent session reader stopped: ~A~%" condition)))))
+      (unless (agent-session-closed-p session)
+        (format *error-output* "~&;; Agent session event thread stopped: ~A~%" condition)))))
 
 (defun deliver (session event)
-  "Call the handler with EVENT (unless SESSION is closed). Handler error is logged and not fatal"
-  (unless (session-closed-p session)
-    (handler-case (funcall (session-handler session) event)
+  "Call the receiver with EVENT (unless SESSION is closed). A receiver error is logged and not fatal"
+  (unless (agent-session-closed-p session)
+    (handler-case (funcall (session-receiver session) event)
       (error (condition)
-        (format *error-output* "~&;; Event handler failed on ~S: ~A~%" (first event) condition)))))
+        (format *error-output* "~&;; Event receiver failed on ~S: ~A~%" (first event) condition)))))
 
 (defun send-to-agent (session message)
   "Write MESSAGE to SESSION's agent unless SESSION is closed"
-  (sb-thread:with-mutex ((session-send-lock session))
-    (unless (session-closed-p session)
-      (w:write-message message (ln:link-stream (session-link session))))))
+  (sb-thread:with-mutex ((agent-session-send-lock session))
+    (unless (agent-session-closed-p session)
+      (w:write-message message (ln:link-stream (agent-session-link session))))))
 
 (defmethod session-eval ((session agent-session) text)
   (send-to-agent session (list :eval text)))
@@ -54,7 +54,7 @@
   (send-to-agent session (list :interrupt)))
 
 (defmethod session-close ((session agent-session))
-  (sb-thread:with-mutex ((session-send-lock session))
-    (setf (session-closed-p session) t))
-  (ln:close-link (session-link session))
-  (sb-thread:join-thread (session-reader session) :default nil))
+  (sb-thread:with-mutex ((agent-session-send-lock session))
+    (setf (agent-session-closed-p session) t))
+  (ln:close-link (agent-session-link session))
+  (sb-thread:join-thread (agent-session-event-thread session) :default nil))

@@ -23,20 +23,25 @@
   :serial t
   :components ((:module "gateway"
                 :components ((:file "package")
-                             ;; (:file "session")  ; not written yet
+                             (:file "session")
                              (:file "agent-session")
-                             ;; (:file "console")  ; not written yet
-                             )))
+                             (:file "console"))))
   :in-order-to ((test-op (test-op "to-restart-is-divine/tests"))))
 
+(defsystem "to-restart-is-divine/web"
+  :description "The CLOG page and the only system that loads CLOG"
+  :depends-on ("to-restart-is-divine/gateway" "clog")
+  :components ((:module "gateway"
+                :components ((:file "web")))))
+
 (defsystem "to-restart-is-divine/link"
-  :description "The Gateway's End of the Agent Socket + Local Agent in Child SBCL"
+  :description "The Gateway's End of the Agent Socket + the Agent in Its Own SBCL Process"
   :depends-on ((:require "sb-bsd-sockets"))
   :components ((:module "gateway"
                 :components ((:file "link")))))
 
 (defsystem "to-restart-is-divine/tests"
-  :description "The fake sessio and every test. No CLOG"
+  :description "The fake session and every test. No CLOG"
   :depends-on ("to-restart-is-divine/agent"
                "to-restart-is-divine/link"
                "to-restart-is-divine/gateway"
@@ -47,10 +52,10 @@
                              (:file "wire-tests")
                              (:file "agent-tests")
                              (:file "link-tests")
-                             ;; (:file "fake-session")        ; not written yet
-                             ;; (:file "console")             ; not written yet
-                             ;; (:file "fake-session-tests")  ; not written yet
-                             (:file "agent-session-tests"))))
+                             (:file "agent-session-tests")
+                             (:file "fake-session")
+                             (:file "console")
+                             (:file "fake-session-tests"))))
   :perform (test-op (o c)
                     (declare (ignore o c))
                     (unless (uiop:symbol-call :fiveam :run!
