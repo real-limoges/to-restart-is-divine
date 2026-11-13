@@ -53,7 +53,9 @@
                              (:file "agent-tests")
                              (:file "link-tests")
                              (:file "agent-session-tests")
-                             (:file "fake-session"))))
+                             (:file "fake-session")
+                             (:file "console")
+                             (:file "fake-session-tests"))))
   :perform (test-op (o c)
                     (declare (ignore o c))
                     (unless (uiop:symbol-call :fiveam :run!

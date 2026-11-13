@@ -422,7 +422,7 @@ Cores are built once and never written to.
 Whether each lesson gets its own Docker image, or there's one SBCL image and the cores get mounted in read-only, is open; we lean toward the second, since then rebuilding a lesson doesn't mean rebuilding an image.
 
 Core size and per-session memory decide how many sessions fit on one box, and whether sessions can share the core's pages is the number we most want to see.
-SBCL is the only implementation on the server, pinned at the version in `sbcl-version` at the repo root (2.6.9).
+SBCL is the only implementation on the server, pinned at the version in `sbcl-version` at the repo root (2.6.10).
 
 ## The Panel
 
@@ -443,8 +443,10 @@ For a lesson with a planted bug it'd look something like:
 +-------------------------------------------------------+
 ```
 
-CLOG (drives the DOM from Lisp over a websocket) is the first thing we try.
-If it fights a REPL widget, the fallback is a small hand-written JS terminal and Spinneret pages.
+CLOG (drives the DOM from Lisp over a websocket) drives the page.
+The one exception is the REPL line, a `<textarea>` with a short hand-written key script (`repl-line-script` in `gateway/web.lisp`).
+On Enter the script takes and clears the text in the browser and sends it up as an event, so typing during a round trip is never mixed into the submitted line, and Shift+Enter inserts a newline.
+History stays in Lisp, so each ArrowUp costs one round trip.
 
 ## Layout
 

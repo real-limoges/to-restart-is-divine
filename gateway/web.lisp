@@ -18,7 +18,7 @@
             ".condition { white-space: pre-wrap; }"
             ".restart { display: block; margin: 0.25rem 0; text-align: left; font: inherit; }"
             ".frame { color: dimgray; }"
-            ".repl-line { font: inherit; padding: 0.25rem; }"
+            ".repl-line { font: inherit; padding: 0.25rem; resize: none; overflow: hidden; }"
             ".side { padding: 1rem; overflow-y: auto; border-left: 1px solid silver; }"))
   "The page's stylesheet, as one line with no quote characters.")
 
@@ -61,7 +61,7 @@ Callbacks are attached completely separately"
   (let* ((console (clog:create-div body :class "console"))
          (scrollback (clog:create-div console :class "scrollback"))
          (panel (clog:create-div console :class "panel"))
-         (repl-line (clog:create-form-element console :text :class "repl-line"))
+         (repl-line (clog:create-text-area console :rows 1 :class "repl-line"))
          (interrupt-button (clog:create-button console :content "Interrupt" :class "interrupt"))
          (side (clog:create-div body :class "side")))
     (setf (clog:text side) "Lesson prose goes here once lessons exist.")
@@ -69,11 +69,20 @@ Callbacks are attached completely separately"
                 :repl-line repl-line :interrupt-button interrupt-button)))
 
 (defun attach-page-callbacks (page)
-  "Attach the REPL line and interrupt callbacks and focus the REPL line"
-  (clog:set-on-key-down (page-repl-line page)
-                        (lambda (repl-line data)
-                          (declare (ignore repl-line))
-                          (on-key page (getf data :key))))
+  "Install the REPL line's key script, attach the REPL line and interrupt callbacks,
+and focus the REPL line"
+  (let ((repl-line (page-repl-line page)))
+    (clog:js-execute repl-line (repl-line-script (clog:script-id repl-line)))
+    (clog:set-on-event-with-data repl-line "repl-submit"
+                                 (lambda (repl-line text)
+                                   (declare (ignore repl-line))
+                                   (submit-line page text)))
+    (clog:set-on-event-with-data repl-line "repl-recall"
+                                 (lambda (repl-line key)
+                                   (declare (ignore repl-line))
+                                   (recall page (if (equal key "ArrowUp")
+                                                    #'g:step-recall-older
+                                                    #'g:step-recall-newer)))))
   (clog:set-on-click (page-interrupt-button page)
                      (lambda (button)
                        (declare (ignore button))
@@ -81,22 +90,42 @@ Callbacks are attached completely separately"
   (sb-thread:with-mutex ((page-lock page))
     (clog:focus (page-repl-line page))))
 
-(defun on-key (page key)
-  "Enter submits the REPL line and ArrowUp/ArrowDown walk the history"
-  (cond ((equal key "Enter") (submit-line page))
-        ((equal key "ArrowUp") (recall page #'g:step-recall-older))
-        ((equal key "ArrowDown") (recall page #'g:step-recall-newer))))
+(defun repl-line-script (id)
+  "The REPL line's key handling, run in the browser on the element named ID.
+Enter without Shift takes the text and clears the line in one step, then sends
+the text as a repl-submit event, so a key typed before the server answers is never
+mixed in. Shift+Enter inserts a newline. ArrowUp on the first line and ArrowDown on
+the last send a repl-recall event. The line grows to fit its text"
+  (format nil "(function (line) {
+  function fit () { line.style.height = 'auto'; line.style.height = line.scrollHeight + 'px'; }
+  line.addEventListener('input', fit);
+  line.addEventListener('keydown', function (e) {
+    if (e.isComposing) return;
+    var before = line.value.slice(0, line.selectionStart);
+    var after = line.value.slice(line.selectionEnd);
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      var text = line.value;
+      line.value = '';
+      fit();
+      $(line).trigger('repl-submit', [text]);
+    } else if ((e.key === 'ArrowUp' && before.indexOf('\\n') < 0)
+               || (e.key === 'ArrowDown' && after.indexOf('\\n') < 0)) {
+      e.preventDefault();
+      line.dataset.recallFrom = line.value;
+      $(line).trigger('repl-recall', [e.key]);
+    }
+  });
+})(~A)" id))
 
-(defun submit-line (page)
-  "Echo, record and clear the REPL line. Send it, and the send is outside the lock"
-  (let ((line (sb-thread:with-mutex ((page-lock page))
-                (let ((line (clog:value (page-repl-line page))))
-                  (setf (clog:value (page-repl-line page)) ""
-                        (page-history page) (g:fold-submitted-line (page-history page) line))
-                  (append-line page "echo" (format nil "* ~A" line))
-                  line))))
-    (unless (g:blank-line-p line)
-      (g:session-eval (page-session page) line))))
+(defun submit-line (page line)
+  "Echo and record LINE, which the browser has already taken off the REPL line.
+Send it, and the send is outside the lock"
+  (sb-thread:with-mutex ((page-lock page))
+    (setf (page-history page) (g:fold-submitted-line (page-history page) line))
+    (append-line page "echo" (format nil "* ~A" line)))
+  (unless (g:blank-line-p line)
+    (g:session-eval (page-session page) line)))
 
 (defun recall (page recall-step)
   "Show the history entry RECALL-STEP finds (if it finds one). RECALL-STEP is STEP-RECALL-OLDER
@@ -105,7 +134,20 @@ or STEP-RECALL-NEWER"
     (multiple-value-bind (history line) (funcall recall-step (page-history page))
       (setf (page-history page) history)
       (when line
-        (setf (clog:value (page-repl-line page)) line)))))
+        (show-recalled-line (page-repl-line page) line)))))
+
+(defun show-recalled-line (repl-line line)
+  "Put LINE in REPL-LINE with the cursor at its end, unless the visitor has typed
+since asking for the recall. The browser makes that check, so no keystroke is overwritten"
+  (clog:js-execute repl-line
+                   (format nil "(function (line) {
+  if (line.value !== line.dataset.recallFrom) return;
+  line.value = '~A';
+  line.selectionStart = line.selectionEnd = line.value.length;
+  line.dispatchEvent(new Event('input'));
+})(~A)"
+                           (clog:escape-string line)
+                           (clog:script-id repl-line))))
 
 (defun on-restart-click (page id index)
   "Invoke restart INDEX of level ID and then return the focus to the REPL line"
